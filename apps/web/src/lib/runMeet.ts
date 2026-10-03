@@ -7,7 +7,7 @@
 // ⚠️ 中文顯示文案一律用「團練」，不得出現「跑團」二字（賽事已有「跑團分組」，撞名會混淆）。
 
 import type {
-  RunMeetCard, RunMeetComment, RunMeetDistanceBand, RunMeetMyState, RunMeetPhase, RunMeetQuota, RunMeetReactionKind, RunMeetStatus,
+  RunMeetCard, RunMeetComment, RunMeetDistanceBand, RunMeetMemberDetail, RunMeetMyState, RunMeetPhase, RunMeetQuota, RunMeetReactionKind, RunMeetStatus,
 } from './api'
 
 // ─────────────────────────────────────────────────────────────
@@ -397,6 +397,154 @@ export function ctaInputOf(m: RunMeetCard): CtaInput {
     is_private: m.is_private, approval_required: m.approval_required,
     has_access: m.has_access, member_count: m.member_count, capacity: m.capacity,
   }
+}
+
+// ─────────────────────────────────────────────────────────────
+// 團練同步跑（Group Run Live）入口——詳情頁「🏃 開始跑步」那一列的狀態判定
+// 契約：docs/runmeet/GROUP_RUN_LIVE_CONTRACT.md §2（詳情 DTO 的 live 區塊）／§8（入口規則）
+//
+// 與 runMeetCta（加入／申請／管理那顆主按鈕）刻意分開、各自一支純函式：兩顆按鈕的顯示條件完全不同，
+// 合併只會讓兩邊的矩陣互相污染。錯了不會有畫面報錯——只會讓人在時窗外按到、或該出現時看不到按鈕——
+// 所以全部判斷收在這裡，由 scripts/verify-run-meet.mjs 逐格驗證。
+//
+// ⚠️ 刻意「不吃」is_ended／phase：ends_at 為 NULL 的團練 effectiveEnd＝meet_at，meetPhase／is_ended 在
+//    meet_at 當下就是 ended，但同步時窗（meet_at + runmeet_live_default_hours + grace）仍然開著。
+//    時窗只認伺服器算好的 live.opens_at／live.closes_at，前端不得再用 phase 自己另外推一份（兩份判斷必定分岔）。
+// ⚠️ 手機時鐘可能偏差：呼叫端在收到詳情的當下用 liveClockOffsetMs 量一次「伺服器 − 手機」，之後一律傳
+//    Date.now() + offset 當 nowMs。最終是否可開跑仍以 POST /run-meets/{id}/live/start 的回應為準，這裡只是 UX 提示。
+// ─────────────────────────────────────────────────────────────
+
+/** 詳情 DTO 的 live 區塊（只出現在成員層 DTO；型別來源是 api.ts RunMeetMemberDetail.live）。 */
+export type RunMeetLiveInfo = NonNullable<RunMeetMemberDetail['live']>
+
+/** runMeetLiveCta 需要的最小輸入。RunMeetDetail（公開層或成員層）可直接傳入——公開層結構上沒有 live 欄位 → hidden。 */
+export interface LiveCtaInput {
+  id: string
+  my_state: RunMeetMyState
+  status: RunMeetStatus
+  live?: RunMeetLiveInfo | null
+}
+
+export type RunMeetLiveCta =
+  | { kind: 'hidden' }
+  // 時窗尚未開放：灰色 disabled「🏃 開始跑步（HH:mm 開放）」。opensAt＝live.opens_at 原字串（RFC3339）。
+  | { kind: 'waiting'; label: string; opensAt: string; presenceOnly: boolean; inWindow: false }
+  // 時窗內：金底白字「🏃 開始跑步」
+  | { kind: 'ready'; label: string; presenceOnly: boolean; inWindow: true }
+  // 本機有「屬於這個團練」的進行中跑步（dor_gps_active.href 含 meet=<id>）：「▶ 回到團練跑」。
+  // 注意：全站 ActiveRunGuard（layout.tsx）本來就會把任何非 /track 頁導回進行中的跑步，所以這個態多半是防呆
+  // （例如另一個分頁剛開跑、這頁還開著）；契約 §8 要求保留，行為以「導回 dor_gps_active.href」為準。
+  | { kind: 'resume'; label: string; presenceOnly: boolean; inWindow: boolean }
+
+export const LIVE_BTN_READY_LABEL = '🏃 開始跑步'
+export const LIVE_BTN_RESUME_LABEL = '▶ 回到團練跑'
+/** 同步時窗內顯示的徽章文字（inWindow 為 true 時）。 */
+export const LIVE_WINDOW_BADGE = '團練進行中'
+/** 按鈕下方的小字（契約 §8）。presence_only（不限地點團）改用第二句——那種團伺服器永不收座標。 */
+export const LIVE_SMALLPRINT = '團練同步需用手機 GPS 全程開啟；只用手錶記錄，夥伴看不到你的位置。'
+export const LIVE_SMALLPRINT_PRESENCE = '不限地點團練：只顯示在跑人數，不分享位置。'
+
+export function runMeetLiveSmallPrint(presenceOnly: boolean): string {
+  return presenceOnly ? LIVE_SMALLPRINT_PRESENCE : LIVE_SMALLPRINT
+}
+
+/** 從 dor_gps_active.href（開跑當下的 pathname+search，如 "/track?meet=<uuid>"）取出團練 id（小寫）。
+ *  不是 /track 頁、或沒有 meet 參數 → ''。純字串處理，不碰 window。 */
+export function activeHrefMeetId(href: string | null | undefined): string {
+  if (!href || typeof href !== 'string') return ''
+  const hashAt = href.indexOf('#')
+  const noHash = hashAt >= 0 ? href.slice(0, hashAt) : href
+  const qAt = noHash.indexOf('?')
+  if (qAt < 0) return ''
+  const pathname = noHash.slice(0, qAt)
+  if (pathname !== '/track' && pathname !== '/track/') return ''
+  return (new URLSearchParams(noHash.slice(qAt + 1)).get('meet') ?? '').trim().toLowerCase()
+}
+
+/** 手機時鐘偏差（毫秒）＝ 伺服器現在 − 手機現在。要在「收到詳情回應的當下」量一次、跟著資料一起存
+ *  （SWR 快取是持久化的：重開頁面時先吐出舊資料，若等到 render 才用 Date.now() 去減舊的 server_now，
+ *  偏差會變成「上次抓取到現在」那麼大）。缺值／解析失敗 → 0（退回信任手機時鐘）。 */
+export function liveClockOffsetMs(serverNowIso: string | null | undefined, receivedAtMs: number): number {
+  if (!serverNowIso) return 0
+  const t = Date.parse(serverNowIso)
+  return Number.isFinite(t) && Number.isFinite(receivedAtMs) ? t - receivedAtMs : 0
+}
+
+/** 「HH:mm」（台北）；與 now 不同一個台北日曆日時前面補「M/D 」，避免三天後才開放的團練寫成「06:30 開放」讓人以為是今天。 */
+function liveOpenAtText(openIso: string, nowMs: number): string {
+  const o = taipeiParts(openIso)
+  const n = taipeiParts(new Date(nowMs))
+  const hm = `${pad2(o.hh)}:${pad2(o.mm)}`
+  return o.y === n.y && o.m === n.m && o.d === n.d ? hm : `${o.m}/${o.d} ${hm}`
+}
+
+const LIVE_HIDDEN: RunMeetLiveCta = { kind: 'hidden' }
+
+/** 「🏃 開始跑步」那一列該顯示什麼（契約 §8）。判斷順序即優先序：
+ *  1) 不顯示：live 缺（公開層 DTO／舊後端）／enabled=false（該使用者入口非 shown）／非成員（my_state 不是 owner／joined）／
+ *     團練已中止（cancelled；closed 仍可跑）／時窗已過（now ≥ closes_at）／時間欄位解析失敗（fail-closed）。
+ *  2) 本機進行中跑步屬於這個團練 → resume（即使還沒到 opens_at：已經在跑的人要能回去）。
+ *  3) now < opens_at → waiting；其餘（opens_at ≤ now < closes_at）→ ready。
+ *  nowMs 必須是「已校正手機時鐘偏差」的毫秒時間戳（Date.now() + liveClockOffsetMs）。
+ *  activeHref＝localStorage dor_gps_active 的 href（由呼叫端讀，這支保持純函式）。 */
+export function runMeetLiveCta(m: LiveCtaInput, nowMs: number, activeHref?: string | null): RunMeetLiveCta {
+  const live = m.live
+  if (!live || !live.enabled) return LIVE_HIDDEN
+  if (m.my_state !== 'owner' && m.my_state !== 'joined') return LIVE_HIDDEN
+  if (m.status === 'cancelled') return LIVE_HIDDEN
+  const opens = Date.parse(live.opens_at)
+  const closes = Date.parse(live.closes_at)
+  if (!Number.isFinite(opens) || !Number.isFinite(closes) || !Number.isFinite(nowMs)) return LIVE_HIDDEN
+  if (nowMs >= closes) return LIVE_HIDDEN
+  const presenceOnly = !!live.presence_only
+  const inWindow = nowMs >= opens
+  const activeId = activeHrefMeetId(activeHref)
+  if (activeId !== '' && activeId === (m.id || '').toLowerCase()) {
+    return { kind: 'resume', label: LIVE_BTN_RESUME_LABEL, presenceOnly, inWindow }
+  }
+  if (!inWindow) {
+    return { kind: 'waiting', label: `${LIVE_BTN_READY_LABEL}（${liveOpenAtText(live.opens_at, nowMs)} 開放）`, opensAt: live.opens_at, presenceOnly, inWindow: false }
+  }
+  return { kind: 'ready', label: LIVE_BTN_READY_LABEL, presenceOnly, inWindow: true }
+}
+
+// 同意視窗的「這個團練不再提醒」（契約 §5／§8）。storage 由呼叫端傳入（元件傳 window.localStorage、測試傳假物件），
+// 讀寫一律 try/catch：隱私模式／容量已滿／被封鎖時退回「每次都彈窗」，絕不能因此擋住開跑。
+type StorageLike = Pick<Storage, 'getItem' | 'setItem'>
+
+/** localStorage key。meetId 轉小寫，與 /track 解析 ?meet= 後的規範字串一致。 */
+export function runMeetLiveConsentKey(meetId: string): string {
+  return `dor_meet_consent_v1:${(meetId || '').toLowerCase()}`
+}
+export function readLiveConsent(storage: StorageLike | null | undefined, meetId: string): boolean {
+  try { return storage?.getItem(runMeetLiveConsentKey(meetId)) === '1' } catch { return false }
+}
+export function writeLiveConsent(storage: StorageLike | null | undefined, meetId: string): void {
+  try { storage?.setItem(runMeetLiveConsentKey(meetId), '1') } catch { /* 寫不進去就下次再問，不影響開跑 */ }
+}
+
+// 同意證據（本分頁）——owner 要求：/track?meet=<id> 深連結不得在「使用者沒有在團練頁確認過同意視窗」的情況下啟用同步或送 consent_v
+// （consent_v 是稽核紀錄，必須為真）。團練頁在使用者確認同意視窗的當下（含已勾「不再提醒」而略過視窗時）寫下這個 sessionStorage 標記
+// （毫秒時間戳字串），/track 的同步引擎（app/track/useMeetLive.ts hasLiveConsentEvidence／createEngine.begin）把它當證據之一——
+// 另外兩個是 localStorage 的「不再提醒」旗標（上面）與本趟跑步紀錄的 consent。⚠️ 只在團練頁「開始跑步」流程寫；「回到團練跑」不寫
+// （那趟的證據在本機 run 紀錄）。這個標記是「一次性」的：引擎只靠它通過同意把關時，會在寫入本趟紀錄的 consent 後立刻移除。
+export const LIVE_CONSENT_SESSION_MAX_MS = 12 * 3600 * 1000 // 標記最長有效 12 小時
+export const LIVE_CONSENT_SESSION_SKEW_MS = 2 * 60 * 1000 // 容許裝置時鐘剛被往回校正（時間戳略晚於現在）；超過視為不可信
+export function runMeetLiveConsentSessionKey(meetId: string): string {
+  return `dor_meet_consent_ok:${(meetId || '').toLowerCase()}`
+}
+export function markLiveConsentSession(storage: StorageLike | null | undefined, meetId: string, nowMs: number): void {
+  try { storage?.setItem(runMeetLiveConsentSessionKey(meetId), String(Math.round(nowMs))) } catch { /* 寫不進去 → /track 找不到證據就不同步（fail-closed），使用者可重新從團練頁進入 */ }
+}
+export function readLiveConsentSession(storage: StorageLike | null | undefined, meetId: string, nowMs: number): boolean {
+  try {
+    const raw = storage?.getItem(runMeetLiveConsentSessionKey(meetId))
+    if (raw == null) return false
+    const t = Number(raw)
+    if (!Number.isFinite(t) || t <= 0) return false
+    const age = nowMs - t
+    return age >= -LIVE_CONSENT_SESSION_SKEW_MS && age <= LIVE_CONSENT_SESSION_MAX_MS
+  } catch { return false }
 }
 
 // ─────────────────────────────────────────────────────────────

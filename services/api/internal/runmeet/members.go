@@ -251,7 +251,13 @@ func (r *Repository) LeaveOrWithdraw(ctx context.Context, uid, meetID string) (s
 		meetID); err != nil {
 		return "", err
 	}
-	return "left", tx.Commit(ctx)
+	if err = tx.Commit(ctx); err != nil {
+		return "left", err
+	}
+	// 團練同步跑：自行退出＝撤銷這個人的同步（grant／位置／心跳一併清除並寫墓碑）。commit 之後才呼叫（M1）；
+	// 失敗只記 log。「撤回申請」那條分支（上面 pending → 刪列）不需要：pending 不可能持有 grant。
+	r.liveRevoke(ctx, meetID, uid)
+	return "left", nil
 }
 
 // Approve 發起人同意一筆申請（規格 1.5(c)：這就是「同時同意多人超過上限」的競態點）。
@@ -328,7 +334,13 @@ func (r *Repository) Reject(ctx context.Context, ownerID, meetID, targetID strin
 		meetID); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	if err = tx.Commit(ctx); err != nil {
+		return err
+	}
+	// 團練同步跑：契約要求婉拒也掛撤銷（pending 本來不可能持有 grant，這是防禦性掛鉤——
+	// 例如 joined→…→pending 的未來路徑；撤銷對沒有 grant 的人是無害的）。commit 之後才呼叫。
+	r.liveRevoke(ctx, meetID, targetID)
+	return nil
 }
 
 // Kick 發起人剔除成員（joined → kicked，被剔除者無法自行回鍋）。
@@ -365,7 +377,13 @@ func (r *Repository) Kick(ctx context.Context, ownerID, meetID, targetID string)
 		meetID); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	if err = tx.Commit(ctx); err != nil {
+		return err
+	}
+	// 團練同步跑：剔除（kicked＝封鎖，對方無法自行回鍋）＝撤銷這個人的同步。commit 之後才呼叫（M1）：
+	// 墓碑時間必然晚於 commit，與 /live/start 的 checkedAtMs 比較即可關掉「start 讀到舊 joined」的競態。
+	r.liveRevoke(ctx, meetID, targetID)
+	return nil
 }
 
 // Unban 解除封鎖（刪掉 kicked 那列，對方即可重新加入）。

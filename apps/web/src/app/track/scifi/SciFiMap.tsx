@@ -17,6 +17,9 @@ import { buildScifiStyle } from './style'
 import { orbitron } from './font'
 import { Soul, TrailPool } from './particles'
 import { LightRain } from './rain'
+import { createPeerLayer, type PeerLayer } from '../meetCanvasPeers'
+import { createReservedTracker, type ReservedTracker } from '../meetReserved'
+import { scifiPeerPainter } from './meetPainter'
 import type { SciFiMapHandle, SciFiMapProps, SciFiTarget, SciFiPos } from './types'
 
 // Orbitron 字型 className 現由 ./font.ts 統一持有（與 OrbitronText.tsx 共用同一實例，避免重複
@@ -234,6 +237,14 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
   // 這條新的建議路線），讓 E2E 能單獨對這個新功能做「有畫 vs 沒畫」前後對照，不用連光點/軌跡一起關掉。
   const plannedRouteRef = useRef<[number, number][] | null>(plannedRoute ?? null); plannedRouteRef.current = plannedRoute ?? null
   const plannedRouteHiddenRef = useRef(false)
+  // 團練同步跑（契約 docs/runmeet/GROUP_RUN_LIVE_CONTRACT.md §7 skin／P3）：他人亮點＋泡泡＋自己綠環。meetPeersRef 是 page.tsx 的
+  // 可變 ref（useMeetLive 寫、這裡每幀讀，不碰 React state、不重繪）；用 ref 存最新的那個 ref 物件（render loop 的閉包活得比單次
+  // render 久，比照上面所有 *Ref 的慣例）。繪製核心在 ../meetCanvasPeers.ts（三套 skin 共用），這裡只負責接線與 scifi 的長相
+  // （./meetPainter.ts）。沒有 ?meet（active／selfRing 皆 false）時 renderFrame 完全不碰它。
+  const meetPeersPropRef = useRef(props.meetPeersRef); meetPeersPropRef.current = props.meetPeersRef
+  const peerLayerRef = useRef<PeerLayer | null>(null)
+  // 保留區：疊在地圖上的控制鈕／橫幅卡片（縮放鈕、回到目前位置、路線規劃條…）從真實 DOM 量，泡泡與徽章避開（./../meetReserved.ts；每秒一次＋resize 時重量）
+  const peerReservedRef = useRef<ReservedTracker | null>(null)
   const focusModeRef = useRef(focusMode); focusModeRef.current = focusMode
   const onFallbackRef = useRef(onFallback); onFallbackRef.current = onFallback
   const onTargetClickRef = useRef(onTargetClick); onTargetClickRef.current = onTargetClick
@@ -804,7 +815,7 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
         try { document.fonts?.load?.(`700 14px ${orbitron.style.fontFamily}`) } catch { /* 預載失敗不影響地圖，canvas 文字退回預設字型 */ }
 
         ro?.disconnect()
-        ro = new ResizeObserver(() => { if (isCurrent()) { try { map!.resize() } catch { /* ignore */ }; applyScifiPadding() } })
+        ro = new ResizeObserver(() => { peerReservedRef.current?.invalidate(); if (isCurrent()) { try { map!.resize() } catch { /* ignore */ }; applyScifiPadding() } })
         ro.observe(containerRef.current)
 
         if (!camera) startLoop() // render loop 只需要啟動一次：frame() 每幀都重讀 mapRef.current，重建後自動接上新 instance
@@ -914,11 +925,22 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
         // 這裡）、以及這個 session 內自動復原成功幾次（webglcontextrestored 或就地重建各算一次）。
         lastFallbackReason: lastFallbackReasonRef.current,
         recoveries: recoveriesRef.current,
+        // 團練同步跑 P3：getter（不是每秒快照）——E2E 讀到的永遠是最後一幀實際畫出來的亮點（CSS px，與 projectLngLat 同座標系）。
+        // peers＝[{n,x,y,name,color,level,bubble,text,alpha,clustered}]；沒有團練模式時為空陣列。
+        get peers() { return peerLayerRef.current?.debugPeers() ?? [] },
+        get peerClusters() { return peerLayerRef.current?.debugClusters() ?? [] },
+        get peerFrameMs() { return peerLayerRef.current?.stats().p95 ?? 0 }, // peer 繪製（begin＋亮點＋泡泡）滾動 120 幀的 p95 毫秒
+        get peerStats() { return peerLayerRef.current?.stats() ?? null },
+        get peerReserved() { return peerLayerRef.current?.debugReserved() ?? [] }, // 泡泡／徽章避開的保留區（CSS px、疊層 canvas 座標）
+        get peerReservedMs() { return peerReservedRef.current?.stats() ?? null }, // 保留區 DOM 量測的次數／耗時（每秒至多一次）
       }
     }, 1000)
     return () => {
       clearInterval(id)
       try { delete (window as unknown as { __scifiDebug?: unknown }).__scifiDebug } catch { /* ignore */ }
+      try { peerLayerRef.current?.destroy() } catch { /* ignore */ }
+      peerLayerRef.current = null // StrictMode／重掛載後 renderFrame 會再惰性建一個
+      peerReservedRef.current = null
     }
   }, [])
 
@@ -1100,6 +1122,24 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
     // 最後已知位置，用暗淡狀態畫一顆假靈魂」的 fallback（比照 cute/retro 已經是的做法：沒有 p 就不畫
     // 任何角色）。soul.update() 仍照常呼叫，讓呼吸/環繞角度持續推進，下次真的有定位時不會卡格重播。
     const pt = p ? map.project([p.lng, p.lat]) : null
+    // 團練同步跑 P3（契約 §7）：他人亮點畫在 drawTargets 之後、自己光球之前（遠到近）；泡泡／群聚徽章留到最後第二輪才畫。
+    // peerLayer 內部全部 try/catch，絕不 throw 進這個 render loop（連續 6 幀失敗會退回 Leaflet）；overlayHidden 時比照其他疊層不畫。
+    const meetPeers = meetPeersPropRef.current?.current
+    let peerLayer: PeerLayer | null = null
+    let peersOn = false
+    if (!overlayHidden && meetPeers && (meetPeers.active || meetPeers.selfRing)) {
+      peerLayer = peerLayerRef.current ?? (peerLayerRef.current = createPeerLayer(scifiPeerPainter))
+      peersOn = peerLayer.begin({
+        peers: meetPeers,
+        project: (lng, lat) => map.project([lng, lat]),
+        w, h, dpr,
+        reduced: reducedMotionRef.current,
+        self: p ? { lat: p.lat, lng: p.lng } : null,
+        selfXY: p && pt ? { x: pt.x, y: pt.y } : null,
+        reserved: (peerReservedRef.current ?? (peerReservedRef.current = createReservedTracker(() => canvasRef.current))).get(Date.now()),
+      })
+      if (peersOn) peerLayer.drawDots(ctx)
+    } else peerLayerRef.current?.clear()
     const soul = soulRef.current, trail = trailRef.current
     if (!reducedMotionRef.current) {
       soul?.update(dt)
@@ -1117,6 +1157,11 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
       const mpp = metersPerPixel(p.lat, map.getZoom())
       const accuracyPx = typeof p.acc === 'number' && mpp > 0 ? Math.min(120, p.acc / mpp) : 40
       if (!overlayHidden) soul?.draw(ctx, pt.x, pt.y, reducedMotionRef.current ? 0 : movingTRef.current, dirRef.current.x, dirRef.current.y, { searching, accuracyPx, reducedMotion: reducedMotionRef.current })
+    }
+    // 團練：自己光球之後畫綠環（selfRing＝我正在分享位置），再來第二輪——所有泡泡與群聚徽章蓋在最上層。
+    if (peerLayer && peersOn) {
+      peerLayer.drawSelfRing(ctx)
+      peerLayer.drawTop(ctx)
     }
   }
 

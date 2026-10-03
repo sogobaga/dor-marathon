@@ -12,6 +12,8 @@ export type {
 } from '../scifi/types'
 
 import type { SciFiPos, SciFiTarget, SciFiKmMark, SciFiStatus } from '../scifi/types'
+import type { MutableRefObject } from 'react'
+import type { MeetLivePeers } from '../meetLiveTypes'
 
 export interface CuteMapProps {
   pos: SciFiPos | null
@@ -35,6 +37,8 @@ export interface CuteMapProps {
   // 位置接到目標點）；null／空陣列＝目前沒有規劃中的路線。畫法與已跑軌跡 segments 明顯區分（珊瑚色
   // 圓點虛線＋白色描邊），疊在光點／目標點下方、圖磚上方，路線最後一點加終點標記。
   plannedRoute?: [number, number][] | null
+  // 團練同步跑（比照 scifi/types.ts 同名欄位；契約 GROUP_RUN_LIVE_CONTRACT.md §6／§7）：P2 只宣告＋傳入，繪製是 P3。
+  meetPeersRef?: MutableRefObject<MeetLivePeers>
 }
 
 export interface CuteMapHandle {

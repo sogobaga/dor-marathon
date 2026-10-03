@@ -93,7 +93,7 @@ export default function PwaInstallPrompt() {
 
   return (
     // data-skin="default"：卡片固定暗底亮字，不隨前台 skin 變色（比照事件面板慣例）
-    <div data-skin="default" style={wrap} role="dialog" aria-label="安裝 DOR App">
+    <div data-skin="default" data-pwa-install-card="" style={wrap} role="dialog" aria-label="安裝 DOR App">
       <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/icon-192.png" alt="" width={44} height={44} style={{ borderRadius: 10, flexShrink: 0 }} />

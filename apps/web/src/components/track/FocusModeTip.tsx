@@ -14,8 +14,9 @@ import { useEffect, useState } from 'react'
 // 或反過來的不一致。
 export const FOCUS_TIP_SEEN_KEY = 'dor_track_focus_tip_seen'
 
-export default function FocusModeTip({ active, onDismiss }: {
+export default function FocusModeTip({ active, meet, onDismiss }: {
   active: boolean
+  meet?: boolean // 團練同步跑（?meet=）：側邊鍵警告補一句「夥伴將看不到你的位置」（鎖屏＝GPS 暫停＝位置不再更新）
   onDismiss?: () => void // 「知道了」按下的瞬間呼叫（page.tsx 藉此命令 RaceFocusMode 進入專注模式，見該檔 openSignal prop）
 }) {
   const [show, setShow] = useState(false)
@@ -40,7 +41,7 @@ export default function FocusModeTip({ active, onDismiss }: {
     <div style={{ position: 'absolute', left: 12, right: 12, top: 56, zIndex: 1000, pointerEvents: 'none' }}>
       <div style={{ pointerEvents: 'auto', background: 'var(--bg-1)', color: 'var(--tx)', border: '1px solid var(--line-2)', borderRadius: 12, padding: '12px 14px', fontSize: 13, lineHeight: 1.7, boxShadow: '0 6px 24px rgba(0,0,0,.4)' }}>
         <div>
-          開跑後會自動進入「專注模式」並鎖定螢幕，可以直接放口袋；要操作請長按畫面下方的鎖頭 1.5 秒解除。按側邊鍵鎖屏會讓 GPS 暫停，解鎖後會自動接續。
+          開跑後會自動進入「專注模式」並鎖定螢幕，可以直接放口袋；要操作請長按畫面下方的鎖頭 1.5 秒解除。按側邊鍵鎖屏會讓 GPS 暫停{meet ? '，夥伴將看不到你的位置' : ''}，解鎖後會自動接續。
         </div>
         {/* 「知道了」＝綠底主按鈕、寬版占滿（2026-09-25 使用者要求：不用灰色小膠囊；與 track 頁主按鈕同色系 --fug/--fug-ink） */}
         <button

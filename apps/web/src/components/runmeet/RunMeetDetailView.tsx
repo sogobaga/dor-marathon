@@ -1,21 +1,24 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import useSWR from 'swr'
 import {
   runMeetApi, type RunMeetCard, type RunMeetDetail, type RunMeetMemberDetail, type RunMeetQuota,
 } from '@/lib/api'
 import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
+import { ACTIVE_RUN_KEY, readActiveRun } from '@/lib/activeRun'
 import { loadLeaflet } from '@/lib/leaflet'
 import { MediaCarousel, Lightbox } from '../shared/MediaCarousel'
 import {
-  REACTION_META, ctaInputOf, fmtMeetRange, memberCountText, memberPct, phaseCountdown, runMeetCta,
-  runMeetLocationIcon, runMeetLocationText,
-  showViewAllComments, viewAllCommentsLabel, isFetchPending, LOADING_TEXT } from '@/lib/runMeet'
+  LIVE_WINDOW_BADGE, REACTION_META, activeHrefMeetId, ctaInputOf, fmtMeetRange, liveClockOffsetMs, memberCountText, memberPct, phaseCountdown,
+  readLiveConsent, markLiveConsentSession, runMeetCta, runMeetLiveCta, runMeetLiveSmallPrint, runMeetLocationIcon, runMeetLocationText,
+  showViewAllComments, viewAllCommentsLabel, isFetchPending, writeLiveConsent, LOADING_TEXT, type RunMeetLiveCta } from '@/lib/runMeet'
 import RunMeetFormModal from './RunMeetFormModal'
 import RunMeetManageSheet from './RunMeetManageSheet'
 import RunMeetUnlockModal from './RunMeetUnlockModal'
 import RunMeetThreadModal from './RunMeetThreadModal'
+import RunMeetLiveConsentModal, { liveGoBtn } from './RunMeetLiveConsentModal'
 import { CommentComposer, TopLevelCommentBlock, useCommentThread } from './RunMeetCommentThread'
 import {
   Avatar, PhaseBadge, RunMeetModal, backBtn, cardBox, errText, fieldHint, ghostBtn, headerStyle,
@@ -61,7 +64,14 @@ export default function RunMeetDetailView({
 
   const { data, error, isLoading, mutate: reload } = useSWR(
     getUserToken() ? ['run-meet', id, uid] : null,
-    () => withUserAuth((t) => runMeetApi.detail(t, id)),
+    async () => {
+      const res = await withUserAuth((t) => runMeetApi.detail(t, id))
+      // 團練同步跑時窗要拿「伺服器時鐘」比，不是手機時鐘（手機可能快慢好幾分鐘）：收到回應的當下量一次偏差，
+      // 跟資料一起放進 SWR 快取。⚠️ 不可等到 render 才用 Date.now() 去減 live.server_now——SWR 快取是持久化的，
+      // 重開頁面會先吐出舊資料，那樣算出來的偏差會變成「上次抓取到現在」那麼大（時窗判定整個偏掉）。
+      const m = res.meet
+      return { ...res, clockOffsetMs: liveClockOffsetMs(m.location_locked ? null : m.live?.server_now, Date.now()) }
+    },
     { shouldRetryOnError: false },
   )
   // 私密團未解鎖 → 後端回 403（body 另帶摘要卡）；已被發起人刪除 → 410（其餘不可見仍是 404，
@@ -92,6 +102,45 @@ export default function RunMeetDetailView({
   const card: RunMeetCard | null = meet ?? fallbackCard
   const isOwner = card?.my_state === 'owner'
   const isMember = card?.my_state === 'joined' || isOwner
+
+  // ── 團練同步跑入口（契約 GROUP_RUN_LIVE_CONTRACT.md §8）────────────────────────────────
+  // ⚠️ 只認伺服器給的 live 時窗（lib/runMeet.ts runMeetLiveCta），不看 is_ended／phase：ends_at 為 NULL 的團練
+  //    在 meet_at 當下 phase 就是 ended，但同步時窗（meet_at + 預設時數 + 寬限）還開著。本檔上方所有 early return
+  //    也都不依賴 is_ended，後端的成員層 DTO 只看「是不是 owner／joined」，已結束不會讓成員視角退回公開層，
+  //    所以這一列不會被連帶藏掉。
+  const router = useRouter()
+  // 只有「成員層 DTO 且入口 enabled」才需要時鐘與進行中跑步監看；其餘情況零計時器、零監聽。
+  const liveWatch = !!meet && !error && !locked && !meet.location_locked && !!meet.live?.enabled
+  const [, setLiveTick] = useState(0) // 只用來每 30 秒重算一次「現在」：waiting → ready、ready → 消失都不必重新整理
+  // 本機進行中跑步（dor_gps_active.href），決定要不要顯示「▶ 回到團練跑」。readActiveRun 全程 try/catch（SSR／隱私模式回 null）。
+  const [activeHref, setActiveHref] = useState(() => readActiveRun()?.href ?? '')
+  const [liveConsent, setLiveConsent] = useState<{ presenceOnly: boolean } | null>(null)
+  const liveGoingRef = useRef(false)
+  useEffect(() => {
+    if (!liveWatch) return
+    const sync = () => { setActiveHref(readActiveRun()?.href ?? ''); setLiveTick((n) => n + 1) }
+    sync()
+    const timer = setInterval(sync, 30000)
+    const onVisible = () => { if (document.visibilityState === 'visible') sync() } // 手機鎖屏回來：計時器被凍結過，立刻補算
+    // 另一個分頁開始／結束了跑步：/track 每個 GPS 點都會寫 dor_gps_run／dor_gps_active，所以只認 dor_gps_active（key 為空＝整個 storage
+    // 被清掉，也要算）、而且只更新 href（字串沒變 React 就不重繪、不跳 tick）——否則跑步期間開著第二個分頁，整個詳情頁每秒重繪 2–3 次。
+    const onStorage = (e: StorageEvent) => {
+      if (e.key && e.key !== ACTIVE_RUN_KEY) return
+      setActiveHref(readActiveRun()?.href ?? '')
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('pageshow', sync)
+    window.addEventListener('storage', onStorage)
+    return () => {
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('pageshow', sync)
+      window.removeEventListener('storage', onStorage)
+    }
+  }, [liveWatch])
+  const liveCta: RunMeetLiveCta = meet && !error && !locked && deletedCountdown === null
+    ? runMeetLiveCta(meet, Date.now() + (data?.clockOffsetMs ?? 0), activeHref)
+    : { kind: 'hidden' }
 
   async function act(fn: () => Promise<unknown>, okMsg: string) {
     if (busy) return
@@ -147,6 +196,34 @@ export default function RunMeetDetailView({
     if (cta.secondary.action === 'share') { share(); return }
     const withdraw = cta.secondary.action === 'withdraw'
     void act(() => withUserAuth((t) => runMeetApi.leave(t, id)), withdraw ? '已撤回申請' : '已退出團練')
+  }
+
+  // 「🏃 開始跑步」：已勾過「這個團練不再提醒」→ 直接進跑步頁；否則先彈同意視窗，確認後才導頁。
+  // 「▶ 回到團練跑」：回到本機進行中跑步的網址。一律 client-side 導頁（不用 sessionStorage 交接，標題由 /live/start 回傳）。
+  const liveHref = `/track?meet=${encodeURIComponent(id.toLowerCase())}`
+  function navigateLive(href: string, resume = false) {
+    if (liveGoingRef.current) return // 防連點：導頁完成前不重複觸發
+    liveGoingRef.current = true
+    setTimeout(() => { liveGoingRef.current = false }, 3000)
+    // 同意證據（owner 要求：/track?meet= 深連結不得略過這裡的同意流程；consent_v 是稽核紀錄、必須為真）：「開始跑步」流程
+    // ——使用者在同意視窗按了確認（勾或沒勾「不再提醒」），或因已勾過而略過視窗——導頁前寫下本分頁標記（毫秒時間戳、≤12 小時有效），
+    // /track 的同步引擎以它為證據。「回到團練跑」（resume）不寫：那趟的同意證據已在本機進行中的跑步紀錄裡。
+    if (!resume) {
+      let ss: Storage | null = null
+      try { ss = window.sessionStorage } catch { ss = null }
+      markLiveConsentSession(ss, id, Date.now())
+    }
+    router.push(href)
+  }
+  function onLive() {
+    if (liveCta.kind === 'ready') {
+      if (readLiveConsent(safeLocalStorage(), id)) navigateLive(liveHref)
+      else setLiveConsent({ presenceOnly: liveCta.presenceOnly })
+    } else if (liveCta.kind === 'resume') {
+      const href = readActiveRun()?.href ?? ''
+      if (activeHrefMeetId(href) === id.toLowerCase()) navigateLive(href, true)
+      else setActiveHref(href) // 另一個分頁已經結束了那趟跑步：重新判定這一列，不可繞過同意視窗直接開跑
+    }
   }
 
   return (
@@ -280,6 +357,31 @@ export default function RunMeetDetailView({
         )}
       </div>
 
+      {/* 團練同步跑入口（契約 §8）：獨立一列，疊在底部 CTA 上方（不塞進下面那一列）。
+          hidden 時整列不渲染；waiting＝灰色 disabled；ready／resume＝金底白字。
+          inWindow（同步時窗內）多一顆「團練進行中」徽章——ends_at 為 NULL 的舊團練 phase 在 meet_at 就是「已結束」，
+          這顆徽章讓人看得出同步其實還開著。 */}
+      {liveCta.kind !== 'hidden' && (
+        <div data-live-row="" style={{ flexShrink: 0, padding: '10px 16px', borderTop: '1px solid var(--line)', background: 'var(--bg)' }}>
+          {liveCta.inWindow && (
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 7 }}>
+              <span data-live-badge="" style={{ ...tagPill, color: 'var(--fug)', borderColor: 'var(--fug)' }}>🟢 {LIVE_WINDOW_BADGE}</span>
+            </div>
+          )}
+          <button
+            type="button"
+            data-live-state={liveCta.kind}
+            onClick={onLive}
+            disabled={liveCta.kind === 'waiting' || busy}
+            style={{
+              ...(liveCta.kind === 'waiting' ? mutedBtn : liveGoBtn),
+              cursor: liveCta.kind === 'waiting' ? 'default' : 'pointer', opacity: busy ? 0.7 : 1,
+            }}
+          >{liveCta.label}</button>
+          <div style={{ ...fieldHint, textAlign: 'center', marginTop: 6 }}>{runMeetLiveSmallPrint(liveCta.presenceOnly)}</div>
+        </div>
+      )}
+
       {/* 底部 CTA（deletedCountdown !== null 時強制不顯示——cta 可能是用舊 fallbackCard 算出來的） */}
       {cta && !locked && deletedCountdown === null && (
         <div style={{ flexShrink: 0, padding: '10px 16px calc(env(safe-area-inset-bottom, 0px) + 24px)', borderTop: '1px solid var(--line)', background: 'var(--bg)', display: 'flex', gap: 8 }}>
@@ -356,9 +458,27 @@ export default function RunMeetDetailView({
         />
       )}
 
+      {liveConsent && (
+        <RunMeetLiveConsentModal
+          meetTitle={card?.title ?? ''}
+          presenceOnly={liveConsent.presenceOnly}
+          onCancel={() => setLiveConsent(null)}
+          onConfirm={(dontRemind) => {
+            if (dontRemind) writeLiveConsent(safeLocalStorage(), id)
+            setLiveConsent(null)
+            navigateLive(liveHref)
+          }}
+        />
+      )}
+
       {zoom && <Lightbox images={zoom.images} index={zoom.index} onClose={() => setZoom(null)} />}
     </div>
   )
+}
+
+// localStorage 可能整個不可用（隱私模式／被封鎖會在「取用 window.localStorage」這一步就丟例外），所以取用本身也要包 try/catch。
+function safeLocalStorage(): Storage | null {
+  try { return typeof window === 'undefined' ? null : window.localStorage } catch { return null }
 }
 
 function InfoRow({ icon, text }: { icon: string; text: string }) {

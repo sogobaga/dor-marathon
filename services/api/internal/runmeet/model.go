@@ -176,6 +176,22 @@ type MemberDetailView struct {
 	Lat            *float64 `json:"lat"`
 	Lng            *float64 `json:"lng"`
 	MeetingDetail  string   `json:"meeting_detail"`
+	// Live 團練同步跑入口資訊（契約 §2）。⚠️ **只在這個型別**：PublicDetailView 沒有這個欄位，
+	// 非成員的 JSON 不會出現 "live" key（與 lat/lng/meeting_detail 同一套「靠不同 struct 分層」做法）。
+	// buildDetail 一律填一份 enabled=false 的預設值（fail-closed）；Handler.detailView 再依觀看者
+	// 的 live 入口狀態與現行設定覆寫。
+	Live *LiveInfo `json:"live,omitempty"`
+}
+
+// LiveInfo 詳情裡的團練同步跑區塊。前端以 server_now − Date.now() 修正手機時鐘偏差；
+// enabled=false 代表「這個使用者的 live 入口非 shown」→ 前端不顯示按鈕。
+// 最終是否可開跑以 POST /live/start 的回應為準（這裡只是 UX 提示）。
+type LiveInfo struct {
+	Enabled      bool      `json:"enabled"`
+	OpensAt      time.Time `json:"opens_at"`
+	ClosesAt     time.Time `json:"closes_at"`
+	ServerNow    time.Time `json:"server_now"`
+	PresenceOnly bool      `json:"presence_only"` // no_location 團：只顯示在跑人數，不分享位置
 }
 
 // MemberView 成員項（欄位白名單，多一個都不行）。

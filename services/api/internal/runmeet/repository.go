@@ -14,7 +14,12 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-type Repository struct{ db *pgxpool.Pool }
+type Repository struct {
+	db *pgxpool.Pool
+	// live 團練同步跑的撤銷掛鉤（見 live_hooks.go）；nil＝不接線（Redis 未設定／測試）。
+	// 所有 liveXxx 呼叫都在 DB commit 之後、且絕不影響主流程。
+	live liveHooks
+}
 
 func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 
@@ -694,7 +699,15 @@ func (r *Repository) SetStatus(ctx context.Context, uid, id, status string) ([]s
 	if status != StatusCancelled {
 		// closed（可逆）／open（重開）都不動待審申請：closed 保留給重開後繼續處理；
 		// open 本來就沒有「因為轉態而該婉拒」的申請（唯一會累積 pending 的來源是加入申請本身）。
-		return nil, tx.Commit(ctx)
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		// 團練同步跑：中止後恢復（cancelled→open）要清掉當初 MarkDead 寫的 dead 旗標，否則恢復後的
+		// 團練在 24 小時內一直回 meet_over。此處 WHERE 已保證未刪除、未被後台下架（見上面 SELECT）。
+		if cur == StatusCancelled && status == StatusOpen {
+			r.liveClearDead(ctx, id)
+		}
+		return nil, nil
 	}
 
 	// 中止：一併婉拒所有待審申請（decided_by 記發起人；婉拒冷卻讀 decided_at）。
@@ -725,7 +738,13 @@ func (r *Repository) SetStatus(ctx context.Context, uid, id, status string) ([]s
 			return nil, err
 		}
 	}
-	return rejected, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return rejected, err
+	}
+	// 團練同步跑：中止＝所有人的同步終止（下一次 /pos → 410 meet_over，/start 也被拒）。
+	// commit 之後才寫（M1）；失敗只記 log，不影響已完成的中止。
+	r.liveMarkDead(ctx, id)
+	return rejected, nil
 }
 
 // SetVisibility 發起人自行隱藏／取消隱藏（hidden_by_owner，可逆）。
@@ -757,6 +776,8 @@ func (r *Repository) SoftDelete(ctx context.Context, uid, id string) error {
 	if tag.RowsAffected() == 0 {
 		return errNotFound
 	}
+	// 團練同步跑：軟刪＝同步終止（autocommit 的單一 UPDATE，到這裡已落盤）。
+	r.liveMarkDead(ctx, id)
 	return nil
 }
 

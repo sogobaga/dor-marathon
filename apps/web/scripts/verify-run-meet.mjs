@@ -13,6 +13,9 @@ const {
   reactionPills, sortReactionCounts, optimisticReactionUpdate, mentionPrefix, replyTargetId,
   hasMoreCursor, showViewAllComments, showReplyToggle, replyToggleLabel, viewAllCommentsLabel,
   mergeCommentPages, insertTopComment, insertReply, updateCommentReaction, markCommentDeleted,
+  runMeetLiveCta, activeHrefMeetId, liveClockOffsetMs, runMeetLiveSmallPrint, LIVE_SMALLPRINT, LIVE_SMALLPRINT_PRESENCE,
+  LIVE_WINDOW_BADGE, LIVE_BTN_READY_LABEL, LIVE_BTN_RESUME_LABEL, runMeetLiveConsentKey, readLiveConsent, writeLiveConsent,
+  LIVE_CONSENT_SESSION_MAX_MS, runMeetLiveConsentSessionKey, markLiveConsentSession, readLiveConsentSession,
 } = await import(modUrl)
 
 let pass = 0, fail = 0
@@ -325,6 +328,260 @@ eq(
   'markCommentDeleted｜遮蔽某則回覆，所屬頂層留言不受影響',
 )
 
+
+// ── 團練同步跑入口：runMeetLiveCta（契約 docs/runmeet/GROUP_RUN_LIVE_CONTRACT.md §2／§8／§9 P4）──────────
+// 固定時窗（台北）：meet_at 06:00 − 30 分 ＝ 05:30 開放；ends_at 07:30 ＋ 30 分 ＝ 08:00 關閉（左閉右開）。
+// 這支錯了不會有畫面報錯——只會讓人在時窗外按到、或該出現時看不到按鈕——所以矩陣逐格釘住。
+const LIVE_MEET_ID = '5b0e7c9e-1c1f-4c58-9d0a-2f6d3a8b7e41'
+const LIVE_BLOCK = {
+  enabled: true,
+  opens_at: '2026-08-30T21:30:00.000Z',   // 05:30 台北
+  closes_at: '2026-08-31T00:00:00.000Z',  // 08:00 台北
+  server_now: '2026-08-31T05:00:00+08:00',
+  presence_only: false,
+}
+const T = (hms) => Date.parse(`2026-08-31T${hms}+08:00`) // 2026-08-31（台北）某時刻
+const lm = (patch = {}, livePatch = {}) => ({ id: LIVE_MEET_ID, my_state: 'joined', status: 'open', live: { ...LIVE_BLOCK, ...livePatch }, ...patch })
+const HIDDEN = { kind: 'hidden' }
+const WAIT_0530 = { kind: 'waiting', label: '🏃 開始跑步（05:30 開放）', opensAt: LIVE_BLOCK.opens_at, presenceOnly: false, inWindow: false }
+const READY = { kind: 'ready', label: '🏃 開始跑步', presenceOnly: false, inWindow: true }
+const RESUME_IN = { kind: 'resume', label: '▶ 回到團練跑', presenceOnly: false, inWindow: true }
+const ACTIVE = `/track?meet=${LIVE_MEET_ID}`
+
+eq(LIVE_BTN_READY_LABEL, '🏃 開始跑步', '團練同步｜ready 文案常數')
+eq(LIVE_BTN_RESUME_LABEL, '▶ 回到團練跑', '團練同步｜resume 文案常數')
+eq(LIVE_WINDOW_BADGE, '團練進行中', '團練同步｜時窗內徽章文字')
+
+// 時窗前／中／後 × owner／joined
+eq(runMeetLiveCta(lm(), T('05:00:00')), WAIT_0530, '團練同步｜joined・時窗前 → waiting（灰、「HH:mm 開放」，opensAt 帶原字串）')
+eq(runMeetLiveCta(lm({ my_state: 'owner' }), T('05:00:00')), WAIT_0530, '團練同步｜owner・時窗前 → waiting')
+eq(runMeetLiveCta(lm(), T('05:29:59.999')), WAIT_0530, '團練同步｜開放前 1ms → 仍是 waiting')
+eq(runMeetLiveCta(lm(), T('05:30:00')), READY, '團練同步｜恰好 opens_at → ready（左閉）')
+eq(runMeetLiveCta(lm(), T('06:30:00')), READY, '團練同步｜joined・時窗內 → ready（金底白字「🏃 開始跑步」）')
+eq(runMeetLiveCta(lm({ my_state: 'owner' }), T('06:30:00')), READY, '團練同步｜owner・時窗內 → ready')
+eq(runMeetLiveCta(lm(), T('07:59:59.999')), READY, '團練同步｜關閉前 1ms → 仍是 ready')
+eq(runMeetLiveCta(lm(), T('08:00:00')), HIDDEN, '團練同步｜恰好 closes_at → 不顯示（右開，now ≥ closes_at）')
+eq(runMeetLiveCta(lm(), T('09:00:00')), HIDDEN, '團練同步｜joined・時窗後 → 不顯示')
+eq(runMeetLiveCta(lm({ my_state: 'owner' }), T('09:00:00')), HIDDEN, '團練同步｜owner・時窗後 → 不顯示')
+
+// cancelled（中止）一律不顯示；closed（暫停收人）仍可跑（契約 §2：status IN open,closed）
+eq(runMeetLiveCta(lm({ status: 'cancelled' }), T('06:30:00')), HIDDEN, '團練同步｜cancelled・時窗內 → 不顯示')
+eq(runMeetLiveCta(lm({ status: 'cancelled', my_state: 'owner' }), T('06:30:00')), HIDDEN, '團練同步｜cancelled・owner・時窗內 → 不顯示')
+eq(runMeetLiveCta(lm({ status: 'cancelled' }), T('05:00:00')), HIDDEN, '團練同步｜cancelled・時窗前 → 不顯示（不顯示灰按鈕）')
+eq(runMeetLiveCta(lm({ status: 'closed' }), T('06:30:00')), READY, '團練同步｜closed（暫停收人）・時窗內 → 仍 ready')
+eq(runMeetLiveCta(lm({ status: 'closed' }), T('05:00:00')), WAIT_0530, '團練同步｜closed・時窗前 → 仍 waiting')
+
+// enabled=false（該使用者的入口非 shown）／live 缺（公開層 DTO 沒有這個欄位）
+eq(runMeetLiveCta(lm({}, { enabled: false }), T('06:30:00')), HIDDEN, '團練同步｜enabled=false・時窗內 → 不顯示')
+eq(runMeetLiveCta(lm({ my_state: 'owner' }, { enabled: false }), T('05:00:00')), HIDDEN, '團練同步｜enabled=false・owner・時窗前 → 不顯示（連灰按鈕都沒有）')
+eq(runMeetLiveCta(lm({ live: undefined }), T('06:30:00')), HIDDEN, '團練同步｜live 缺（公開層 DTO）→ 不顯示')
+eq(runMeetLiveCta(lm({ live: null }), T('06:30:00')), HIDDEN, '團練同步｜live=null → 不顯示')
+{
+  const pub = { id: LIVE_MEET_ID, my_state: 'none', status: 'open', location_locked: true } // 結構上就沒有 live
+  eq(runMeetLiveCta(pub, T('06:30:00')), HIDDEN, '團練同步｜非成員的公開層 DTO（無 live）→ 不顯示')
+}
+
+// 非成員（即使後端不小心給了 live.enabled=true，例如後台視角 my_state=none 但看得到成員層 DTO）
+for (const st of ['none', 'pending', 'rejected', 'kicked', 'left']) {
+  eq(runMeetLiveCta(lm({ my_state: st }), T('06:30:00')), HIDDEN, `團練同步｜my_state=${st}・時窗內 → 不顯示（只有 owner／joined 可開跑）`)
+  eq(runMeetLiveCta(lm({ my_state: st }), T('05:00:00'), ACTIVE), HIDDEN, `團練同步｜my_state=${st}・時窗前＋殘留 active href → 仍不顯示`)
+}
+
+// presence_only（不限地點團）：按鈕規則不變，只是帶 presenceOnly 讓小字／同意視窗換文案
+eq(runMeetLiveCta(lm({}, { presence_only: true }), T('06:30:00')), { ...READY, presenceOnly: true }, '團練同步｜presence_only・時窗內 → ready（presenceOnly=true）')
+eq(runMeetLiveCta(lm({}, { presence_only: true }), T('05:00:00')), { ...WAIT_0530, presenceOnly: true }, '團練同步｜presence_only・時窗前 → waiting（presenceOnly=true）')
+eq(runMeetLiveCta(lm({}, { presence_only: true }), T('09:00:00')), HIDDEN, '團練同步｜presence_only・時窗後 → 不顯示')
+eq(runMeetLiveCta(lm({}, { presence_only: true }), T('06:30:00'), ACTIVE), { ...RESUME_IN, presenceOnly: true }, '團練同步｜presence_only・resume → presenceOnly=true')
+eq(runMeetLiveSmallPrint(false), '團練同步需用手機 GPS 全程開啟；只用手錶記錄，夥伴看不到你的位置。', '團練同步｜小字（一般團）')
+eq(runMeetLiveSmallPrint(true), '不限地點團練：只顯示在跑人數，不分享位置。', '團練同步｜小字（presence_only 團）')
+eq([LIVE_SMALLPRINT, LIVE_SMALLPRINT_PRESENCE].some((s) => s.includes('跑團')), false, '團練同步｜文案不得出現「跑團」二字')
+
+// resume：本機 dor_gps_active.href 含 meet=<這個團練的 id>
+eq(runMeetLiveCta(lm(), T('06:30:00'), ACTIVE), RESUME_IN, '團練同步｜時窗內＋active href 含 meet=<id> → resume「▶ 回到團練跑」')
+eq(runMeetLiveCta(lm({ my_state: 'owner' }), T('06:30:00'), ACTIVE), RESUME_IN, '團練同步｜owner・resume')
+eq(runMeetLiveCta(lm(), T('06:30:00'), `/track?strategy=abc&meet=${LIVE_MEET_ID}&from=race`), RESUME_IN, '團練同步｜resume：meet 參數不在第一個、旁邊還有別的 query')
+eq(runMeetLiveCta(lm(), T('06:30:00'), `/track?meet=${LIVE_MEET_ID.toUpperCase()}`), RESUME_IN, '團練同步｜resume：href 內 id 大小寫不拘')
+eq(runMeetLiveCta(lm({ id: LIVE_MEET_ID.toUpperCase() }), T('06:30:00'), ACTIVE), RESUME_IN, '團練同步｜resume：detail.id 大小寫不拘')
+eq(runMeetLiveCta(lm(), T('06:30:00'), `/track?meet=${LIVE_MEET_ID}#x`), RESUME_IN, '團練同步｜resume：href 帶 #hash 仍可辨識')
+eq(runMeetLiveCta(lm(), T('06:30:00'), '/track?meet=11111111-2222-4333-8444-555555555555'), READY, '團練同步｜active href 是「另一個」團練 → 不是 resume（維持 ready）')
+eq(runMeetLiveCta(lm(), T('06:30:00'), '/track'), READY, '團練同步｜active href 沒有 meet（一般自由跑）→ 不是 resume')
+eq(runMeetLiveCta(lm(), T('06:30:00'), '/track?strategy=abc'), READY, '團練同步｜active href 是策略跑 → 不是 resume')
+eq(runMeetLiveCta(lm(), T('06:30:00'), `/other?meet=${LIVE_MEET_ID}`), READY, '團練同步｜meet 參數出現在非 /track 路徑 → 不算')
+eq(runMeetLiveCta(lm(), T('06:30:00'), ''), READY, '團練同步｜active href 空字串 → ready')
+eq(runMeetLiveCta(lm(), T('06:30:00'), null), READY, '團練同步｜active href=null → ready')
+eq(runMeetLiveCta(lm(), T('06:30:00'), undefined), READY, '團練同步｜未帶 active href → ready')
+eq(runMeetLiveCta(lm(), T('09:00:00'), ACTIVE), HIDDEN, '團練同步｜時窗後即使有 active href → 不顯示（now ≥ closes_at 優先）')
+eq(runMeetLiveCta(lm({ status: 'cancelled' }), T('06:30:00'), ACTIVE), HIDDEN, '團練同步｜cancelled＋active href → 不顯示')
+eq(runMeetLiveCta(lm({}, { enabled: false }), T('06:30:00'), ACTIVE), HIDDEN, '團練同步｜enabled=false＋active href → 不顯示')
+eq(runMeetLiveCta(lm(), T('05:00:00'), ACTIVE), { ...RESUME_IN, inWindow: false }, '團練同步｜（異常）時窗前卻有這團的 active href → resume，inWindow=false（已在跑的人要能回去）')
+
+// ⚠️ 不吃 is_ended／phase：ends_at 為 NULL 的團練，meetPhase 在 meet_at 就是 ended，但同步時窗（meet_at＋3 小時＋30 分）仍開著。
+{
+  const nullEndsLive = { enabled: true, opens_at: '2026-08-30T21:30:00.000Z', closes_at: '2026-08-31T01:30:00.000Z', server_now: '2026-08-31T06:30:00+08:00', presence_only: false } // 關閉 09:30 台北
+  const m = { id: LIVE_MEET_ID, my_state: 'joined', status: 'open', is_ended: true, phase: 'ended', live: nullEndsLive }
+  eq(meetPhase(MEET_ISO, null, new Date(T('06:30:00'))), 'ended', 'ends_at=NULL・06:30：meetPhase 已是 ended（前提）')
+  eq(runMeetLiveCta(m, T('06:30:00')), READY, '團練同步｜ends_at=NULL・phase=ended・時窗內 → 仍 ready（不因 is_ended／phase 藏掉）')
+  eq(runMeetLiveCta(m, T('09:29:59.999')), READY, '團練同步｜ends_at=NULL・meet_at＋3h＋30m 前 1ms → 仍 ready')
+  eq(runMeetLiveCta(m, T('09:30:00')), HIDDEN, '團練同步｜ends_at=NULL・恰好 meet_at＋3h＋30m → 不顯示')
+  eq(runMeetLiveCta({ ...m, phase: 'upcoming', is_ended: false }, T('06:30:00')), READY, '團練同步｜結果不隨 is_ended／phase 改變')
+}
+
+// 「HH:mm 開放」一律台北時間；不同一個台北日曆日則補「M/D 」（避免三天後才開放寫成「05:30 開放」）
+eq(runMeetLiveCta(lm(), Date.parse('2026-08-31T00:10:00+08:00')).label, '🏃 開始跑步（05:30 開放）', '團練同步｜同一個台北日（00:10）→ 只寫 HH:mm')
+eq(runMeetLiveCta(lm(), Date.parse('2026-08-30T23:50:00+08:00')).label, '🏃 開始跑步（8/31 05:30 開放）', '團練同步｜前一天 23:50 → 補「8/31 」')
+eq(runMeetLiveCta(lm(), Date.parse('2026-08-28T10:00:00+08:00')).label, '🏃 開始跑步（8/31 05:30 開放）', '團練同步｜三天前 → 補「8/31 」')
+eq(runMeetLiveCta(lm({}, { opens_at: '2026-08-31T00:05:00+08:00', closes_at: '2026-08-31T03:00:00+08:00' }), Date.parse('2026-08-30T22:00:00+08:00')).label, '🏃 開始跑步（8/31 00:05 開放）', '團練同步｜午夜過後才開放：台北 00:05（不是 24:05）')
+
+// 手機時鐘偏差：以 server_now 校正（呼叫端收到詳情當下量一次 offset，之後傳 Date.now()+offset）
+// 四個邊界各抓一格「不校正會判錯、校正後才對」：手機慢→誤判未開／誤判已開；手機快→誤判已開／誤判已關。
+{
+  const skew = (serverHms, phoneHms) => {
+    const phone = T(phoneHms)
+    const offset = liveClockOffsetMs(`2026-08-31T${serverHms}+08:00`, phone) // 收到詳情當下量一次
+    return { offset, raw: runMeetLiveCta(lm(), phone).kind, fixed: runMeetLiveCta(lm(), phone + offset).kind }
+  }
+  eq(skew('05:31:00', '05:21:00'), { offset: 600000, raw: 'waiting', fixed: 'ready' }, '團練同步｜手機慢 10 分、伺服器 05:31（已開）：未校正誤判 waiting、校正後 ready')
+  eq(skew('05:25:00', '05:35:00'), { offset: -600000, raw: 'ready', fixed: 'waiting' }, '團練同步｜手機快 10 分、伺服器 05:25（未開）：未校正誤判 ready、校正後 waiting（不會提早開放）')
+  eq(skew('07:55:00', '08:05:00'), { offset: -600000, raw: 'hidden', fixed: 'ready' }, '團練同步｜手機快 10 分、伺服器 07:55（未關）：未校正誤判已關、校正後 ready')
+  eq(skew('08:05:00', '07:55:00'), { offset: 600000, raw: 'ready', fixed: 'hidden' }, '團練同步｜手機慢 10 分、伺服器 08:05（已關）：未校正誤判 ready、校正後 hidden')
+  eq(skew('06:30:00', '06:30:00'), { offset: 0, raw: 'ready', fixed: 'ready' }, '團練同步｜時鐘準確 → offset=0、結果不變')
+}
+eq(liveClockOffsetMs(null, 123), 0, '團練同步｜server_now 缺 → offset 0（信任手機時鐘）')
+eq(liveClockOffsetMs(undefined, 123), 0, '團練同步｜server_now=undefined → 0')
+eq(liveClockOffsetMs('', 123), 0, '團練同步｜server_now 空字串 → 0')
+eq(liveClockOffsetMs('not-a-date', 123), 0, '團練同步｜server_now 解析失敗 → 0')
+eq(liveClockOffsetMs('2026-08-31T05:31:00+08:00', Number.NaN), 0, '團練同步｜手機時間非有限數 → 0')
+
+// fail-closed：時間欄位壞掉一律不顯示（寧可少一顆按鈕，也不要讓人在不明時窗按到）
+eq(runMeetLiveCta(lm({}, { opens_at: 'garbage' }), T('06:30:00')), HIDDEN, '團練同步｜opens_at 解析失敗 → 不顯示')
+eq(runMeetLiveCta(lm({}, { closes_at: '' }), T('06:30:00')), HIDDEN, '團練同步｜closes_at 空字串 → 不顯示')
+eq(runMeetLiveCta(lm(), Number.NaN), HIDDEN, '團練同步｜nowMs=NaN → 不顯示')
+
+// 純函式不改動輸入
+{
+  const m = lm(); const before = JSON.stringify(m)
+  runMeetLiveCta(m, T('06:30:00'), ACTIVE)
+  eq(JSON.stringify(m), before, '團練同步｜runMeetLiveCta 不改動傳入的物件')
+}
+
+// 完整矩陣：my_state × status × 時窗（前／內／後）× presence_only × enabled，共 252 格，與獨立寫的判定表對帳
+{
+  const states = ['owner', 'joined', 'pending', 'rejected', 'kicked', 'left', 'none']
+  const statuses = ['open', 'closed', 'cancelled']
+  const wins = { before: '05:00:00', inside: '06:30:00', after: '08:30:00' }
+  const bad = []
+  let cells = 0
+  for (const my_state of states) for (const status of statuses) for (const [win, hms] of Object.entries(wins))
+    for (const presence_only of [false, true]) for (const enabled of [true, false]) {
+      cells++
+      const got = runMeetLiveCta(lm({ my_state, status }, { presence_only, enabled }), T(hms))
+      const want = !enabled || !['owner', 'joined'].includes(my_state) || status === 'cancelled' ? 'hidden'
+        : win === 'before' ? 'waiting' : win === 'inside' ? 'ready' : 'hidden'
+      const po = got.kind === 'hidden' ? undefined : got.presenceOnly
+      const inW = got.kind === 'hidden' ? undefined : got.inWindow
+      if (got.kind !== want || (want !== 'hidden' && (po !== presence_only || inW !== (win === 'inside')))) {
+        bad.push(`${my_state}/${status}/${win}/po=${presence_only}/en=${enabled} → ${got.kind}（應為 ${want}）`)
+      }
+    }
+  eq({ cells, bad }, { cells: 252, bad: [] }, '團練同步｜完整矩陣 252 格全部符合判定表')
+}
+
+// dor_gps_active.href → 團練 id
+eq(activeHrefMeetId(`/track?meet=${LIVE_MEET_ID}`), LIVE_MEET_ID, 'activeHrefMeetId｜/track?meet=<id>')
+eq(activeHrefMeetId('/track?meet=ABCDEF12-0000-4000-8000-000000000001'), 'abcdef12-0000-4000-8000-000000000001', 'activeHrefMeetId｜轉小寫（與 /track 解析 ?meet= 的規範字串一致）')
+eq(activeHrefMeetId('/track?strategy=s1&meet=m1&from=race'), 'm1', 'activeHrefMeetId｜meet 不在第一個參數')
+eq(activeHrefMeetId('/track/?meet=m2'), 'm2', 'activeHrefMeetId｜/track/ 也算')
+eq(activeHrefMeetId('/track?meet=m3#frag'), 'm3', 'activeHrefMeetId｜忽略 #hash')
+eq(activeHrefMeetId('/track'), '', 'activeHrefMeetId｜沒有 query → 空字串')
+eq(activeHrefMeetId('/track?strategy=s1'), '', 'activeHrefMeetId｜沒有 meet 參數 → 空字串')
+eq(activeHrefMeetId('/track?meet='), '', 'activeHrefMeetId｜meet 為空 → 空字串')
+eq(activeHrefMeetId('/trackfoo?meet=x'), '', 'activeHrefMeetId｜/trackfoo 不是 /track')
+eq(activeHrefMeetId('/?meet=x'), '', 'activeHrefMeetId｜非 /track 路徑 → 空字串')
+eq(activeHrefMeetId('https://evil.example/track?meet=x'), '', 'activeHrefMeetId｜絕對網址（非本站 pathname+search 格式）→ 空字串')
+eq(activeHrefMeetId(''), '', 'activeHrefMeetId｜空字串')
+eq(activeHrefMeetId(null), '', 'activeHrefMeetId｜null')
+eq(activeHrefMeetId(undefined), '', 'activeHrefMeetId｜undefined')
+eq(activeHrefMeetId(123), '', 'activeHrefMeetId｜非字串 → 空字串（不丟例外）')
+
+// 同意視窗「這個團練不再提醒」（localStorage dor_meet_consent_v1:<meetId>；storage 由呼叫端傳入，全部 try/catch）
+{
+  eq(runMeetLiveConsentKey('ABC-123'), 'dor_meet_consent_v1:abc-123', '同意旗標｜key＝dor_meet_consent_v1:<小寫 meetId>')
+  const mem = new Map()
+  const okStore = { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => { mem.set(k, String(v)) } }
+  eq(readLiveConsent(okStore, LIVE_MEET_ID), false, '同意旗標｜沒存過 → false（要彈窗）')
+  writeLiveConsent(okStore, LIVE_MEET_ID)
+  eq(mem.get(`dor_meet_consent_v1:${LIVE_MEET_ID}`), '1', '同意旗標｜寫入值＝"1"')
+  eq(readLiveConsent(okStore, LIVE_MEET_ID), true, '同意旗標｜存過 → true（不彈窗）')
+  eq(readLiveConsent(okStore, LIVE_MEET_ID.toUpperCase()), true, '同意旗標｜meetId 大小寫不拘')
+  eq(readLiveConsent(okStore, '11111111-2222-4333-8444-555555555555'), false, '同意旗標｜只對「這個團練」有效，不外溢到別的團練')
+  mem.set(`dor_meet_consent_v1:${LIVE_MEET_ID}`, 'true')
+  eq(readLiveConsent(okStore, LIVE_MEET_ID), false, '同意旗標｜值不是 "1" → 視為沒勾')
+  const boom = { getItem: () => { throw new Error('SecurityError') }, setItem: () => { throw new Error('QuotaExceededError') } }
+  eq(readLiveConsent(boom, LIVE_MEET_ID), false, '同意旗標｜storage 讀取丟例外 → false（每次彈窗），不擋開跑')
+  let threw = false
+  try { writeLiveConsent(boom, LIVE_MEET_ID) } catch { threw = true }
+  eq(threw, false, '同意旗標｜storage 寫入丟例外 → 吞掉，不擋開跑')
+  eq(readLiveConsent(null, LIVE_MEET_ID), false, '同意旗標｜storage=null（取不到 localStorage）→ false')
+  let threwNull = false
+  try { writeLiveConsent(undefined, LIVE_MEET_ID) } catch { threwNull = true }
+  eq(threwNull, false, '同意旗標｜storage=undefined 寫入 → 不丟例外')
+}
+
+// 同意證據（本分頁 sessionStorage dor_meet_consent_ok:<meetId>；/track?meet= 深連結不得在「沒在團練頁確認過同意視窗」時啟用同步／送 consent_v）
+// 團練頁在使用者確認視窗（或因「不再提醒」略過視窗）的當下寫入毫秒時間戳；/track 同步引擎讀它，≤12 小時才算數。storage 由呼叫端傳入，全部 try/catch。
+{
+  const NOW = 1_790_000_000_000 // 固定「現在」，不依賴實際時鐘
+  const H = 3600 * 1000
+  const mem = new Map()
+  const okStore = { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => { mem.set(k, String(v)) } }
+  const KEY = `dor_meet_consent_ok:${LIVE_MEET_ID}`
+  eq(LIVE_CONSENT_SESSION_MAX_MS, 12 * H, '同意證據｜有效期上限＝12 小時')
+  eq(runMeetLiveConsentSessionKey('ABC-123'), 'dor_meet_consent_ok:abc-123', '同意證據｜key＝dor_meet_consent_ok:<小寫 meetId>')
+  eq(runMeetLiveConsentSessionKey('ABC-123') === runMeetLiveConsentKey('ABC-123'), false, '同意證據｜與「不再提醒」旗標是不同的 key（不互相覆蓋）')
+  eq(readLiveConsentSession(okStore, LIVE_MEET_ID, NOW), false, '同意證據｜沒寫過 → false（深連結不同步）')
+  markLiveConsentSession(okStore, LIVE_MEET_ID, NOW)
+  eq(mem.get(KEY), String(NOW), '同意證據｜寫入值＝毫秒時間戳字串')
+  eq(readLiveConsentSession(okStore, LIVE_MEET_ID, NOW), true, '同意證據｜剛寫入 → true')
+  eq(readLiveConsentSession(okStore, LIVE_MEET_ID, NOW + 5 * 60 * 1000), true, '同意證據｜5 分鐘後 → true')
+  eq(readLiveConsentSession(okStore, LIVE_MEET_ID, NOW + 12 * H), true, '同意證據｜剛好 12 小時 → true（邊界含）')
+  eq(readLiveConsentSession(okStore, LIVE_MEET_ID, NOW + 12 * H + 1), false, '同意證據｜超過 12 小時 1 毫秒 → false')
+  eq(readLiveConsentSession(okStore, LIVE_MEET_ID, NOW + 30 * H), false, '同意證據｜30 小時後 → false（過期不能拿舊同意開新的同步）')
+  eq(readLiveConsentSession(okStore, LIVE_MEET_ID.toUpperCase(), NOW), true, '同意證據｜meetId 大小寫不拘（讀寫皆小寫化）')
+  eq(readLiveConsentSession(okStore, '11111111-2222-4333-8444-555555555555', NOW), false, '同意證據｜只對「這個團練」有效，不外溢到別的團練')
+  // 裝置時鐘被往回校正：標記時間略晚於現在（≤2 分鐘）容許；晚很多＝不可信
+  eq(readLiveConsentSession(okStore, LIVE_MEET_ID, NOW - 60 * 1000), true, '同意證據｜標記比現在晚 1 分鐘（時鐘微調）→ true')
+  eq(readLiveConsentSession(okStore, LIVE_MEET_ID, NOW - 2 * 60 * 1000), true, '同意證據｜標記比現在晚剛好 2 分鐘 → true（邊界含）')
+  eq(readLiveConsentSession(okStore, LIVE_MEET_ID, NOW - 2 * 60 * 1000 - 1), false, '同意證據｜標記比現在晚超過 2 分鐘 → false（未來時間戳不可信）')
+  eq(readLiveConsentSession(okStore, LIVE_MEET_ID, NOW - 5 * H), false, '同意證據｜標記是 5 小時後的「未來」→ false')
+  // 髒資料一律當沒有證據（fail-closed）
+  for (const [raw, why] of [['', '空字串'], ['abc', '非數字'], ['NaN', 'NaN'], ['0', '0'], ['-5', '負數'], ['1', '字串 1（旗標用的值，不是時間戳）'], ['true', 'true'], ['Infinity', 'Infinity']]) {
+    mem.set(KEY, raw)
+    eq(readLiveConsentSession(okStore, LIVE_MEET_ID, NOW), false, `同意證據｜值是${why} → false`)
+  }
+  // 重新寫入會覆蓋舊標記（使用者再次從團練頁進入 → 期限重算）
+  mem.set(KEY, String(NOW - 20 * H))
+  eq(readLiveConsentSession(okStore, LIVE_MEET_ID, NOW), false, '同意證據｜20 小時前的舊標記 → false')
+  markLiveConsentSession(okStore, LIVE_MEET_ID, NOW)
+  eq(readLiveConsentSession(okStore, LIVE_MEET_ID, NOW), true, '同意證據｜再次從團練頁進入 → 重寫標記、期限重算 → true')
+  markLiveConsentSession(okStore, LIVE_MEET_ID, NOW + 0.4)
+  eq(mem.get(KEY), String(NOW), '同意證據｜時間戳四捨五入成整數毫秒')
+  // 隔離：本機持久旗標與本分頁標記互不影響
+  mem.clear()
+  writeLiveConsent(okStore, LIVE_MEET_ID)
+  eq(readLiveConsentSession(okStore, LIVE_MEET_ID, NOW), false, '同意證據｜只有「不再提醒」旗標、沒有分頁標記 → 分頁標記仍是 false（兩者各自獨立判定）')
+  // storage 取不到／會丟例外 → 不丟、fail-closed
+  const boom = { getItem: () => { throw new Error('SecurityError') }, setItem: () => { throw new Error('QuotaExceededError') } }
+  eq(readLiveConsentSession(boom, LIVE_MEET_ID, NOW), false, '同意證據｜storage 讀取丟例外 → false（不同步），不丟例外')
+  let threw = false
+  try { markLiveConsentSession(boom, LIVE_MEET_ID, NOW) } catch { threw = true }
+  eq(threw, false, '同意證據｜storage 寫入丟例外 → 吞掉，不擋開跑')
+  eq(readLiveConsentSession(null, LIVE_MEET_ID, NOW), false, '同意證據｜storage=null → false')
+  eq(readLiveConsentSession(undefined, LIVE_MEET_ID, NOW), false, '同意證據｜storage=undefined → false')
+  let threwNull = false
+  try { markLiveConsentSession(null, LIVE_MEET_ID, NOW); markLiveConsentSession(undefined, LIVE_MEET_ID, NOW) } catch { threwNull = true }
+  eq(threwNull, false, '同意證據｜storage=null/undefined 寫入 → 不丟例外')
+  eq(readLiveConsentSession(okStore, '', NOW), false, '同意證據｜meetId 為空 → false（不丟例外）')
+}
 
 // ── 載入態判定（2026-08-31 使用者回報：一進頁面先看到「載入失敗」）──────────────
 // 空窗期＝isLoading 已 false、但 data 與 error 都還是 undefined（SWR 切換查詢金鑰的那一幀）。

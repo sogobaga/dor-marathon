@@ -4,6 +4,9 @@
 // 這裡刻意只放「純型別」（無 runtime 程式碼、不 import maplibre-gl），讓 page.tsx 平時（非 scifi）
 // 也能安全 import type 而不拖進任何 bundle 內容。
 
+import type { MutableRefObject } from 'react'
+import type { MeetLivePeers } from '../meetLiveTypes'
+
 export interface SciFiPos {
   lat: number
   lng: number
@@ -62,6 +65,10 @@ export interface SciFiMapProps {
   // 畫法交給各風格自己（與已跑軌跡 segments 明顯區分開），見 CONTRACT_R2 §ROUTEPLAN：疊在光點／
   // 目標點下方、圖磚上方；並在路線最後一點加一個小小的終點標記。
   plannedRoute?: [number, number][] | null
+  // 團練同步跑（契約 docs/runmeet/GROUP_RUN_LIVE_CONTRACT.md §6／§7）：他人亮點／陳舊門檻／自己光球外環旗標。
+  // 可變 ref（更新不觸發重繪）；P2 只負責宣告＋從 track/page.tsx 傳入，三套 skin 的實際繪製（橘點／泡泡／綠環）是 P3。
+  // 沒有團練模式（沒有 ?meet=）時 page.tsx 仍會傳入，但 active 恆為 false、dots 恆為空陣列。
+  meetPeersRef?: MutableRefObject<MeetLivePeers>
 }
 
 export interface SciFiMapHandle {

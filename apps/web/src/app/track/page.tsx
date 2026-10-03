@@ -48,6 +48,11 @@ const RetroMap = dynamic(() => import('./retro/RetroMap'), { ssr: false })
 const CuteMap = dynamic(() => import('./cute/CuteMap'), { ssr: false })
 import { readActiveRun, writeActiveRun, touchActiveRun, clearActiveRun, activeRunAgeMs, isActiveRunFresh, type ActiveRunState, type ActiveRunWorkoutSnapshot } from '@/lib/activeRun'
 import FocusModeTip, { FOCUS_TIP_SEEN_KEY } from '@/components/track/FocusModeTip'
+// 團練同步跑（?meet=<uuid>，契約 docs/runmeet/GROUP_RUN_LIVE_CONTRACT.md）：同步引擎＋Leaflet 亮點圖層＋共用文案。
+// 同步只是疊在自由跑上的「盡力而為」功能，這幾個模組的任何失敗都不得影響跑步記錄。
+import { useMeetLive, hasLiveConsentEvidence } from './useMeetLive'
+import { createMeetPeerRenderer } from './meetLeafletPeers'
+import { meetStateParts, NO_CONSENT_MESSAGE } from './meetLiveUtil'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -81,6 +86,12 @@ const SCIFI_LAST_POS_KEY = 'dor_scifi_last_pos' // 與 scifi/SciFiMap.tsx 的 LA
 const RETRO_LAST_POS_KEY = 'dor_retro_last_pos' // 與 retro/RetroMap.tsx 的 LAST_POS_KEY 同一把 key，同上。
 const CUTE_LAST_POS_KEY = 'dor_cute_last_pos' // 與 cute/CuteMap.tsx 的 LAST_POS_KEY 同一把 key，同上。
 const DAAN_PARK: [number, number] = [25.0296, 121.5357] // 台北大安森林公園：無任何已知位置時的預設城市中心
+// 團練同步跑：?meet= 必須是嚴格 UUID（契約 §3：非法一律當沒有這個參數，不進同步模式）。
+const MEET_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+// 團練模式＋預設風格的專注模式：透出上方 Leaflet 地圖時，題列／底部面板／橫幅（帶 data-scifi-focus-hide＋data-meet-focus）
+// 與 Leaflet 縮放鈕都隱藏——scifi／retro／cute 靠 globals.css 的 [data-skin=…] 規則做同一件事，預設風格沒有那條規則，
+// 所以團練模式自帶這兩條（只在 meetMode 才注入，其他模式零影響）。
+const MEET_FOCUS_CSS = '[data-scifi-focus-hide="true"][data-meet-focus="1"]{visibility:hidden}#gps-map[data-meet-focus="1"] .leaflet-control-container{visibility:hidden}'
 
 // CONTRACT.md §4：初始中心＝該風格最後已知位置（localStorage），若沒有則台北大安森林公園；純讀取，
 // 讀不到／格式不符一律安靜退回預設值，不拋錯（這兩套地圖都是錦上添花的個人化視覺）。
@@ -303,11 +314,24 @@ export default function TrackPage() {
   // 開跑後（status==='tracking'）交給 RaceFocusMode 疊層顯示大字資訊＋配速/補給提醒。載入失敗只提示、不擋跑步。
   const [raceStrategy, setRaceStrategy] = useState<RaceStrategy | null>(null)
   const [stratErr, setStratErr] = useState('')
+  // 團練同步跑（?meet=<uuid>，契約 GROUP_RUN_LIVE_CONTRACT.md §1／§6）：自由跑（目標 none、無課表／策略）＋疊上
+  // 「盡力而為」的夥伴位置同步。/track 是靜態 prerender，所以和 ?focus=／?strategy= 一樣在掛載 effect 才讀 URL
+  // （見下方 effect；SSR／hydration 第一輪恆為 null，不會 hydration mismatch）。meetId 是 state（驅動 UI 與同步
+  // 引擎），meetIdRef 給 closure 讀最新值。自動接續時 ?meet= 在 dor_gps_active.href（pathname+search）內保留，
+  // ActiveRunGuard 導回時一併帶回，所以重整後這個 effect 會再解析一次、同步隨之恢復。
+  const [meetId, setMeetId] = useState<string | null>(null)
+  const meetMode = !!meetId
+  const meetIdRef = useRef<string | null>(null)
+  // 同意證據（owner 要求：深連結不得略過團練頁的同意流程；見 useMeetLive.ts 檔頭）：只給「開跑前橫幅」決定要不要顯示
+  // 「請從團練頁進入」＋連結。預設 true＝SSR／hydration 第一輪與未判定前不顯示（不閃、不 mismatch）；meetId 解析完與每次回到 idle
+  // （含「再跑一次」）才在 client 重判（見下方 effect）。引擎自己在開跑（begin）時重新判定，不依賴這個 state。
+  const [meetConsentOk, setMeetConsentOk] = useState(true)
 
   // 專注模式進度條的目標：strategy > 自主訓練 Free Run > 結構化課表全距離/全時間（純函式見 lib/runGoal.ts）。
   // runGoalRef：commitSeg 活在 onPos 的 useCallback 裡（deps=[ensureMap]，closure 凍結在首次 render），
   // 直接讀 runGoal 會拿到舊值，所以照全檔既有慣例（distRef 等）另存一份 ref 供 commitSeg 讀最新值。
-  const runGoal: RunGoal = useMemo(() => resolveRunGoal(raceStrategy, workout), [raceStrategy, workout])
+  // 團練模式強制自由跑：目標一律 none（即使載入了個人任務課表／?strategy=），HUD 與一般自由跑逐項一致。
+  const runGoal: RunGoal = useMemo(() => resolveRunGoal(meetMode ? null : raceStrategy, meetMode ? null : workout), [raceStrategy, workout, meetMode])
   const runGoalRef = useRef<RunGoal>(runGoal); runGoalRef.current = runGoal
   // 每公里鼓勵語（v1.1.663）：免登入文案池，失敗/為空時用內建 fallback（CHEER_FALLBACK）。
   const { data: cheerPoolRaw } = useSWR('run-cheers', () => runCheersApi.get(), { revalidateOnFocus: false, shouldRetryOnError: false })
@@ -464,6 +488,11 @@ export default function TrackPage() {
   // 揮汗有禮直接截圖需求（2026-09-06 owner 定案，見 lib/kmMarkers.ts）：軌跡上的 1/2/3…號碼標記
   // 圖層——commitSeg 每跨一整公里即時加一個；重開跑/re-render 整批重建時用 clearLayers() 清空重畫。
   const kmMarkersRef = useRef<any>(null)
+  // 團練同步跑：Leaflet 他人亮點圖層（L.layerGroup，緊鄰 kmMarkersRef 建立，見 ensureMap；內容由 meetLeafletPeers.ts 管理）
+  const meetLayerRef = useRef<any>(null)
+  // 同步引擎（契約 §6）：只在 status==='tracking' 且 meetId 合法時運作，位置由它的 timer 讀 curPosRef／curPosAtRef
+  // （絕不在 onPos 內送請求）。meetPeersRef 是可變 ref——他人亮點更新不觸發本頁重繪；liveStats 節流 ≤1 Hz。
+  const { meetPeersRef, liveStats, sharePaused, toggleShare, meetTitle } = useMeetLive({ meetId, status, curPosRef, curPosAtRef, startedAtRef: startRef })
 
   // ── 帳號風格覆寫 GPS 地圖（未來科技 scifi／復古 RPG retro／溫馨可愛 cute）：純加法整合，以上既有
   // Leaflet refs／邏輯完全不動（CONTRACT.md §4）── 生效判斷：用 lib/skinOverride.ts 的 getActiveSkin()
@@ -555,8 +584,14 @@ export default function TrackPage() {
   // CSS 規則由 THEME 工人補上），露出下方半透明的地圖與各自的跑者呈現（scifi＝發光粒子群、
   // retro＝像素魔法光點、cute＝靈魂光點；三者皆非角色造型，見 app/track/retro/orb.ts、
   // app/track/cute/orb.ts 說明）；只加了一個 data 屬性，不改這些元素原本的邏輯／內容。
-  const hideForFocus = mapSkinActive && focusOpen
-  const scifiFocusHideAttr = hideForFocus ? { 'data-scifi-focus-hide': 'true' } : {}
+  // 團練同步跑（契約 §7）：預設風格（沒有 skin 地圖）的專注模式在團練模式下也要「透出上方 Leaflet 地圖」
+  // （RaceFocusMode 的底色在團練模式改成與 skin 相同形狀的漸層），所以題列／底部面板／橫幅同樣要隱藏——
+  // 上面那條 CSS 只對 data-skin=scifi|retro|cute 生效，預設風格改靠 data-meet-focus 屬性＋下方 JSX 的
+  // <style>（見 MEET_FOCUS_CSS）。meetDefaultFocus＝團練模式＋專注模式開啟＋沒有 skin 地圖；其他模式
+  // （一般跑步／賽事策略／課表）的專注模式維持 v850 純黑，完全不受影響。
+  const meetDefaultFocus = meetMode && focusOpen && !mapSkinActive
+  const hideForFocus = (mapSkinActive && focusOpen) || meetDefaultFocus
+  const scifiFocusHideAttr = hideForFocus ? { 'data-scifi-focus-hide': 'true', ...(meetDefaultFocus ? { 'data-meet-focus': '1' } : {}) } : {}
   // 讀取（不改）既有跳點排除規則（MAX_SPEED/GAP_MAX_S/GAP_MAX_M，見檔頭常數），把 pointsRef 依「與
   // Leaflet/伺服器同一套規則會被判定無效」的邊界切開——CONTRACT_R2.md §3「排除段不畫」：SciFiMap 的
   // 路線圖層只收得到真正連續、可信的子段落，跳過的那條邊本身不出現在任何一段裡（純讀取重算，完全不
@@ -677,6 +712,7 @@ export default function TrackPage() {
     routeLineRef.current = L.polyline([], { color: '#FF8A3D', weight: 4, dashArray: '6 8', opacity: 0.9 }).addTo(map) // 建議路線（虛線橘）
     cpLayerRef.current = L.layerGroup().addTo(map)
     kmMarkersRef.current = L.layerGroup().addTo(map) // 每公里號碼標記圖層（見 kmMarkersRef 宣告處）
+    meetLayerRef.current = L.layerGroup().addTo(map) // 團練同步跑：他人亮點圖層（見 meetLayerRef 宣告處；沒有團練模式時永遠是空圖層）
     // 目前位置綠點：先建立但「不」加到地圖——在真正拿到 GPS 定位（onPos）時才 addTo，避免預設中心(信義區)冒出假定位點
     markRef.current = L.circleMarker([lat, lng], { radius: 7, color: '#fff', fillColor: '#46E3A0', fillOpacity: 1, weight: 2 })
     // 使用者手動拖曳/縮放地圖 → 暫停自動跟隨（否則每次 GPS 更新都會把畫面拉回目前位置，無法看前方路線）；
@@ -972,6 +1008,32 @@ export default function TrackPage() {
   // 這裡在掛載時先用預設中心把地圖畫出來（不請求 GPS，保留不主動跳權限的行為）；GPS 一有位置
   //（onPos→ensureMap 為 no-op）會自動把畫面/標記移到實際位置。
   useEffect(() => { ensureMap(23.8, 121.0, 7) }, [ensureMap]) // 中性視圖（台灣全島俯視、低 zoom）：避免無 GPS 時空白，也避免顯示看起來像真實定位的假地點（原本市政府座標會讓使用者誤以為已定位）；有 GPS 後 onPos→ensureMap 為 no-op，實際置中靠 onPos 內的 centerMap
+
+  // 團練同步跑：Leaflet 他人亮點圖層（契約 §7）。團練模式下一律運作——三套 skin 生效時 #gps-map 只是 visibility:hidden
+  // 的背景地圖，但 skin 圖塊失敗退回 Leaflet 時亮點必須還在，所以只降頻（isMapHidden，見 meetLeafletPeers.ts），不停掉。
+  // 渲染器只讀 meetPeersRef（不碰 React state）；自己的綠點在每次新增亮點後 bringToFront。
+  const leafletHiddenRef = useRef(false)
+  leafletHiddenRef.current = mapSkinActive // mapSkinActive 已排除「該風格已 fallback」的情況（isFailedNow）
+  useEffect(() => {
+    if (!meetMode || !mapReady || !meetLayerRef.current) return
+    const Lg = (window as any).L
+    if (!Lg) return
+    const renderer = createMeetPeerRenderer({
+      L: Lg,
+      layer: meetLayerRef.current,
+      peersRef: meetPeersRef,
+      getSelf: () => curPosRef.current,
+      bringSelfToFront: () => { if (markShownRef.current) { try { markRef.current?.bringToFront() } catch { /* ignore */ } } },
+      isMapHidden: () => leafletHiddenRef.current,
+    })
+    renderer.start()
+    return () => renderer.destroy()
+  }, [meetMode, mapReady, meetPeersRef])
+  // 同步被終止（被踢／團練結束／另一視窗接手／名額滿…）：跑步繼續，只跳一則 toast 說明（專注模式內另有狀態行＋震動）
+  useEffect(() => {
+    if (liveStats.state === 'stopped' && liveStats.message) showToast(liveStats.message, 8000)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在「進入 stopped／訊息更新」時觸發；showToast 是本元件的具名函式宣告
+  }, [liveStats.state, liveStats.messageAt])
 
   // 里程獎勵設定（進度條/預覽用）：進頁抓一次
   useEffect(() => {
@@ -2610,6 +2672,23 @@ export default function TrackPage() {
     const from = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('from') : null
     if (from === 'race') setShowStartTip(true)
   }, [])
+  // 團練同步跑：?meet=<uuid>（嚴格 UUID regex，大小寫不拘，統一轉小寫成規範字串）→ 進入團練模式（自由跑＋夥伴位置同步，
+  // 見 meetId 宣告處）。非法值當沒有這個參數。重整／自動接續時 dor_gps_active.href 內的 ?meet= 會讓這裡再解析一次。
+  useEffect(() => {
+    const m = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('meet') : null
+    if (m && MEET_UUID_RE.test(m)) {
+      const id = m.toLowerCase()
+      meetIdRef.current = id
+      setMeetId(id)
+    }
+  }, [])
+  // 開跑前橫幅的同意證據判定：進頁（meetId 解析完）與每次回到 idle（「再跑一次」）都重判。本分頁標記是一次性的——
+  // 上一趟的引擎通過把關後就把它用掉，所以「再跑一次」沒有「不再提醒」旗標時這裡會得到 false → 顯示提示＋「前往團練頁」連結，
+  // 且按開始也不會同步（引擎 begin 自己再判一次）。
+  useEffect(() => {
+    if (!meetId || status !== 'idle') return
+    setMeetConsentOk(hasLiveConsentEvidence(meetId))
+  }, [meetId, status])
   // 比賽專注模式：?strategy=<id> 帶入賽事策略 → 載入後開跑前顯示小標示；403/404/網路失敗只提示一行、回一般模式
   useEffect(() => {
     const id = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('strategy') : null
@@ -2963,7 +3042,7 @@ export default function TrackPage() {
           那排不受影響。openSignal／onOpenChange 見該檔 props 說明與下方 focusEnterSignal/focusOpenRef 宣告處。 */}
       {status === 'tracking' && (
         <RaceFocusMode
-          strategy={raceStrategy} distanceM={distance} elapsed={elapsed} avgPace={avgPace}
+          strategy={meetMode ? null : raceStrategy} distanceM={distance} elapsed={elapsed} avgPace={avgPace}
           segLivePace={segLivePace} movingSegLivePace={movingSegLivePace}
           hasSignal={!!curPos} goal={runGoal}
           initialOpen={focusInitialOpenRef.current}
@@ -2972,6 +3051,8 @@ export default function TrackPage() {
           scifi={sciFiActive}
           retro={retroActive}
           cute={cuteActive}
+          meetLive={meetMode ? liveStats : undefined}
+          onToggleShare={toggleShare}
         />
       )}
       {/* 每公里鼓勵語「泡泡對話框+啦啦隊角色」演出（v1.1.664）：獨立掛在本頁頂層、不論 status，
@@ -3052,6 +3133,42 @@ export default function TrackPage() {
         </div>
       </header>
 
+      {/* 團練同步跑（契約 §7）：預設風格的專注模式要透出上方 Leaflet 地圖——只在團練模式才注入這兩條規則
+          （其他模式的專注模式維持 v850 純黑）；屬性由 scifiFocusHideAttr／#gps-map 在 meetDefaultFocus 時帶上。 */}
+      {meetMode && <style>{MEET_FOCUS_CSS}</style>}
+      {/* 同步膠囊（非專注時，契約 §7）：#track-map-area 的兄弟節點（在版面流內，不疊在地圖上，避開縮放鈕／回到目前位置鈕），
+          帶 scifiFocusHideAttr（專注模式開啟時 visibility:hidden，仍佔位 → 不造成版面跳動）。不在可拖曳面板的
+          捲動容器內（通則：覆蓋層／固定元素不放進面板）。狀態文案與專注模式第一行同一份（meetStateParts）。
+          「暫停分享位置」切換：暫停時只送心跳，因互惠規則你也看不到夥伴——文案寫明。 */}
+      {meetMode && status === 'tracking' && (() => {
+        const parts = meetStateParts(liveStats)
+        const canToggle = !liveStats.presenceOnly && (liveStats.state === 'live' || liveStats.state === 'need_fix' || liveStats.state === 'paused' || liveStats.state === 'reconnecting' || liveStats.state === 'error')
+        const sub = parts.note ?? (liveStats.state === 'live' && meetTitle ? meetTitle : '')
+        return (
+          // 高度固定（CAPSULE_H）＋每行單行省略號：膠囊在 #track-map-area（flex:1）上方，它的高度一變（1 行↔2 行、有無暫停鈕、
+          // 標題折行）地圖區就跟著縮放，Leaflet 每次都要 invalidateSize＋重新置中。完整文案在專注模式第一行／toast（title 也帶全文）。
+          <div
+            {...scifiFocusHideAttr}
+            data-meet-capsule="1"
+            style={{ flexShrink: 0, boxSizing: 'border-box', height: 48, margin: '8px 12px 0', padding: '6px 6px 6px 12px', display: 'flex', alignItems: 'center', gap: 8, background: 'var(--bg-1)', color: 'var(--tx)', border: '1px solid var(--line-2)', borderRadius: 16, overflow: 'hidden' }}
+          >
+            <div role="status" aria-live="polite" title={sub ? `${parts.base}　${sub}` : parts.base} style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 800, lineHeight: 1.35 }}>
+              <span style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{parts.base}</span>
+              {sub && <span style={{ display: 'block', fontSize: 10.5, fontWeight: 600, color: 'var(--tx-dim)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{sub}</span>}
+            </div>
+            {canToggle && (
+              <button
+                onClick={toggleShare}
+                aria-pressed={sharePaused}
+                style={sharePaused
+                  ? { flexShrink: 0, minHeight: 34, background: '#FF8A3D', color: '#fff', border: 'none', borderRadius: 999, padding: '6px 13px', fontSize: 12, fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit' }
+                  : { flexShrink: 0, minHeight: 34, background: 'transparent', color: 'var(--tx)', border: '1px solid var(--line-2)', borderRadius: 999, padding: '6px 13px', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}
+              >{sharePaused ? '▶ 恢復分享' : '⏸ 暫停分享'}</button>
+            )}
+          </div>
+        )
+      })()}
+
       {/* 地圖 + COROS 式可拖曳資訊面板：地圖佔滿容器、資訊面板可上下拖曳露出更多/更少（配色與顯示資訊都不變，只改操作體驗）
           id="track-map-area"：硬導覽防閃專用錨點（globals.css `html[data-skin="…"] #track-map-area`
           在風格地圖的 chunk／MapLibre／磚圖還沒載好前，鋪上該風格自己的底色，取代預設 Leaflet 灰底）。 */}
@@ -3068,7 +3185,7 @@ export default function TrackPage() {
             皆為 false（getSkinServerSnapshot 固定回 null），兩邊 markup 因此逐字相同、不會有
             hydration mismatch。skinMapFallback 為 true（該風格已 fallback）時補上
             data-map-fallback，讓 CSS 的 `:not([data-map-fallback])` 失效、地圖立刻改回可見。 */}
-        <div id="gps-map" {...(skinMapFallback ? { 'data-map-fallback': '1' } : {})} style={{ position: 'absolute', inset: 0, zIndex: 0, background: 'var(--bg-2)', ...(mapSkinActive ? { visibility: 'hidden' as const } : {}) }} />
+        <div id="gps-map" {...(skinMapFallback ? { 'data-map-fallback': '1' } : {})} {...(meetDefaultFocus ? { 'data-meet-focus': '1' } : {})} style={{ position: 'absolute', inset: 0, zIndex: 0, background: 'var(--bg-2)', ...(mapSkinActive ? { visibility: 'hidden' as const } : {}) }} />
         {/* ⚠️ 2026-09-30 review 抓到的 major bug（已移除，不是修色號）：這裡原本多鋪了一層
             `{mapSkinActive && <div style={{ background: 'var(--bg-2)' }} />}`，理由是「網路載入的空窗
             要鋪底色」，但那顆 div 蓋在 `#track-map-area`（本層容器）之上，用的是**全站共用**的
@@ -3095,6 +3212,7 @@ export default function TrackPage() {
             bottomInset={mapSnapshot.bottomInset}
             onFollowChange={handleSkinFollowChange}
             plannedRoute={plannedRoute}
+            meetPeersRef={meetPeersRef}
           />
         )}
         {retroActive && (
@@ -3113,6 +3231,7 @@ export default function TrackPage() {
             bottomInset={mapSnapshot.bottomInset}
             onFollowChange={handleSkinFollowChange}
             plannedRoute={plannedRoute}
+            meetPeersRef={meetPeersRef}
           />
         )}
         {cuteActive && (
@@ -3131,6 +3250,7 @@ export default function TrackPage() {
             bottomInset={mapSnapshot.bottomInset}
             onFollowChange={handleSkinFollowChange}
             plannedRoute={plannedRoute}
+            meetPeersRef={meetPeersRef}
           />
         )}
         {mapSkinActive && status !== 'done' && (
@@ -3165,7 +3285,7 @@ export default function TrackPage() {
         )}
         {/* 首次開跑提示（專注模式＝鎖定模式，每裝置一次）：按「知道了」bump focusEnterSignal，命令
             RaceFocusMode 立即進入專注模式（見 start() 對 focusInitialOpenRef 的判斷與該檔 openSignal prop）。 */}
-        <FocusModeTip active={status === 'tracking'} onDismiss={() => setFocusEnterSignal((s) => s + 1)} />
+        <FocusModeTip active={status === 'tracking'} meet={meetMode} onDismiss={() => setFocusEnterSignal((s) => s + 1)} />
         {/* 「定位中…」遮罩：進頁自動預熱定位期間（還沒拿到第一個座標）顯示，取代看起來像真實地點的假中心；
             拿到 curPos 或逾時/失敗（autoLocating 轉 false）即消失。不擋操作。 */}
         {status === 'idle' && !curPos && autoLocating && (
@@ -3621,12 +3741,31 @@ export default function TrackPage() {
       {stratErr && (
         <div style={{ margin: '0 16px 10px', flexShrink: 0, fontSize: 12.5, color: 'var(--hunt)' }}>{stratErr}</div>
       )}
+      {/* 團練同步跑（?meet=<uuid>）：開跑前說明這是「自由跑＋夥伴位置同步」——同步需要手機 GPS 全程開啟，只用手錶
+          記錄的人夥伴看不到位置（契約 §8）。純 idle 提示、非 fixed 疊層；帶 scifiFocusHideAttr 與其餘橫幅一致。
+          第三行：沒有同意證據（深連結直接進來、沒在團練頁確認過同意視窗）→ 說明這趟不會同步位置＋連結回該團練頁
+          （/?runmeet=<id> 是 PhoneShell 既有深連結，登入的成員會直接開到該團練詳情）；同一句 NO_CONSENT_MESSAGE 與開跑後的膠囊提示一致。 */}
+      {meetMode && status === 'idle' && (
+        <div {...scifiFocusHideAttr} data-meet-banner="1" style={{ margin: '0 16px 10px', flexShrink: 0, background: 'rgba(255,138,61,.12)', border: '1px solid #FF8A3D', borderRadius: 12, padding: '10px 12px', fontSize: 13, color: 'var(--tx)', lineHeight: 1.5 }}>
+          <div style={{ fontWeight: 800 }}>👥 團練同步跑</div>
+          <div style={{ fontSize: 12, color: 'var(--tx-dim)' }}>需手機 GPS 全程開啟；僅手錶無法同步位置</div>
+          {!meetConsentOk && (
+            <div data-meet-consent-hint="1" style={{ fontSize: 12, fontWeight: 700, color: 'var(--hunt)', marginTop: 4 }}>
+              {NO_CONSENT_MESSAGE}{' '}
+              <a data-meet-consent-link="1" href={`/?runmeet=${meetId}`} style={{ color: '#FF8A3D', fontWeight: 800, textDecoration: 'underline', whiteSpace: 'nowrap' }}>前往團練頁</a>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 操作 */}
       <div {...scifiFocusHideAttr} style={{ padding: '16px 16px calc(16px + var(--cta-safe, 0px))', flexShrink: 0, borderTop: '1px solid var(--line)', background: 'var(--bg)' }}>
         {status === 'idle' && (
           user
-            ? (workout
+            ? (meetMode
+                // 團練模式＝自由跑：無視已載入的課表（目標一律 none，見 runGoal），一律走一般開跑（3 秒倒數＋GPS 門檻不變）
+                ? <button onClick={() => requestStart(start)} className="skin-btn-start" style={btn}>▶ 開始團練跑</button>
+                : workout
                 ? <button onClick={() => requestStart(startWorkout)} className="skin-btn-start" style={btn}>{workout.kind === 'freetrain' ? '▶ 開始訓練' : '▶ 開始課表挑戰'}</button>
                 : <button onClick={() => requestStart(start)} className="skin-btn-start" style={btn}>▶ 開始跑步</button>)
             : <button onClick={() => setShowLogin(true)} style={btn}>請先登入</button>

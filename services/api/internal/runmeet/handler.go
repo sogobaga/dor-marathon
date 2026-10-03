@@ -18,6 +18,7 @@ import (
 	"github.com/dor/api/internal/auth"
 	"github.com/dor/api/internal/middleware"
 	"github.com/dor/api/internal/realtime"
+	"github.com/dor/api/internal/runmeet/live"
 )
 
 // uuidRE 路徑/body 帶入的 id 必須是合法 UUID（比照 partner/handler.go:16）：
@@ -31,10 +32,30 @@ type Handler struct {
 	repo *Repository
 	rdb  *redis.Client
 	rt   *realtime.Manager
+
+	// liveStart 團練同步跑 POST /{id}/live/start（見 handler_live.go）。熱路徑 /pos、/leave 不在這裡：
+	// 它們在 internal/runmeet/live（沒有任何 DB 存取），由 main.go 另掛 /run-meet-live。
+	liveStart *liveStartHandler
+	// liveSettingsFn 測試用：覆寫詳情 DTO 讀 live 設定的來源（nil＝讀 app_settings）。
+	liveSettingsFn func(ctx context.Context) live.Settings
+	// killSwitchOff 取消緊急關閉回呼的註冊（測試清理用；正式環境註冊一次不取消）。
+	killSwitchOff func()
 }
 
 func NewHandler(db *pgxpool.Pool, rdb *redis.Client, rt *realtime.Manager) *Handler {
-	return &Handler{db: db, repo: NewRepository(db), rdb: rdb, rt: rt}
+	h := &Handler{db: db, repo: NewRepository(db), rdb: rdb, rt: rt}
+
+	// 團練同步跑接線：Redis 可用時，撤銷掛鉤（repository 在 DB commit 之後呼叫）與緊急關閉回呼
+	// （後台寫入 runmeet_live_entry_state 時 SET／DEL rml:kill）共用同一個 live.Store。
+	// rdb 為 nil 時 store 也是 nil：/live/start 在取 checkedAtMs 那步就回 503（fail-closed），掛鉤整個略過。
+	var store *live.Store
+	if rdb != nil {
+		store = live.NewStore(rdb)
+		h.repo.SetLiveHooks(store)
+		h.killSwitchOff = registerLiveKillSwitch(store)
+	}
+	h.liveStart = &liveStartHandler{repo: &pgLiveRepo{db: db, repo: h.repo}, store: store}
+	return h
 }
 
 // --- 回應工具（每套件各自複製一份，比照 partner/handler.go:237）---
@@ -151,7 +172,7 @@ func (h *Handler) requireEntry(next http.Handler) http.Handler {
 			respondErr(w, http.StatusUnauthorized, "login required")
 			return
 		}
-		email, code, isSuper, _, err := h.repo.UserFlags(r.Context(), uid)
+		email, code, isSuper, isVIP, err := h.repo.UserFlags(r.Context(), uid)
 		if err != nil {
 			respondErr(w, http.StatusInternalServerError, "failed to resolve access")
 			return
@@ -160,7 +181,9 @@ func (h *Handler) requireEntry(next http.Handler) http.Handler {
 			respondErr(w, http.StatusForbidden, errEntryClosed.Msg)
 			return
 		}
-		next.ServeHTTP(w, r)
+		// 把已查到的旗標放進 context：團練同步跑的 live 入口判定（/live/start、詳情 DTO）要同一組
+		// email／編碼／超管旗標，不必在同一個請求內重查 users。
+		next.ServeHTTP(w, r.WithContext(withEntryFlags(r.Context(), email, code, isSuper, isVIP)))
 	})
 }
 
@@ -194,6 +217,10 @@ func (h *Handler) Router() http.Handler {
 	// ＝完全不限流的假防護（見 middleware/ratelimit.go 的 d == "" 分支）。
 	// 每團每人的失敗計數另在 handler 內自行 INCR（見 Unlock）。
 	r.With(h.limit("runmeet_unlock", 10, time.Minute)).Post("/{id}/unlock", h.Unlock)
+
+	// 團練同步跑（見 handler_live.go）：開跑時一次的 DB 驗證（成員／時窗／名額／同意稽核）。6 次/分/人。
+	// 熱路徑 /pos、/leave 不在這個 Router——它們每請求都會經 requireEntry 查 DB，違反「零 PostgreSQL」。
+	r.With(h.limit("runmeet_live_start", 6, time.Minute)).Post("/{id}/live/start", h.LiveStart)
 
 	r.With(h.limit("runmeet_join", 10, time.Minute)).Post("/{id}/join", h.Join)
 	r.With(h.limit("runmeet_join", 10, time.Minute)).Delete("/{id}/join", h.Leave)
@@ -355,7 +382,10 @@ func (h *Handler) buildDetail(m *meetRow, viewer string, isAdmin bool) any {
 	}
 	if CanSeePreciseLocation(isOwner, m.MyStatus, isAdmin) {
 		return MemberDetailView{detailBase: base, LocationLocked: false,
-			Lat: m.Lat, Lng: m.Lng, MeetingDetail: m.MeetingDetail}
+			Lat: m.Lat, Lng: m.Lng, MeetingDetail: m.MeetingDetail,
+			// 團練同步跑：只有成員層有 live 區塊。這裡是純函式（沒有 DB／ctx），一律 enabled=false
+			// （fail-closed）＋預設時窗；Handler.detailView 會再依觀看者的 live 入口與現行設定覆寫。
+			Live: buildLiveInfo(m, live.DefaultSettings(), false, time.Now())}
 	}
 	return PublicDetailView{detailBase: base, LocationLocked: true, LocationNote: locationNote}
 }
@@ -559,7 +589,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	h.notify(r.Context(), u)
 	respondJSON(w, http.StatusOK, map[string]any{
-		"meet": h.buildDetail(&m, u, false), "used": used, "remaining": maxInt(quotaCap-used, 0)})
+		"meet": h.detailView(r.Context(), &m, u), "used": used, "remaining": maxInt(quotaCap-used, 0)})
 }
 
 func maxInt(a, b int) int {
@@ -600,7 +630,7 @@ func (h *Handler) Detail(w http.ResponseWriter, r *http.Request) {
 			"error": errLocked.Msg, "locked": true, "card": h.buildCard(&m, u, false, false)})
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"meet": h.buildDetail(&m, u, false)})
+	respondJSON(w, http.StatusOK, map[string]any{"meet": h.detailView(r.Context(), &m, u)})
 }
 
 // PUT /run-meets/{id}
@@ -654,7 +684,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	h.notifyMembers(r.Context(), id)
 	respondJSON(w, http.StatusOK, map[string]any{
-		"meet": h.buildDetail(&m, u, false), "pending_kept": res.PendingKept})
+		"meet": h.detailView(r.Context(), &m, u), "pending_kept": res.PendingKept})
 }
 
 // notifyMembers 推播給該團所有 joined/pending 成員（含發起人）。

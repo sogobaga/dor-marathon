@@ -547,7 +547,10 @@ export interface GroupPreset {
 }
 
 class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  // retryAfterS：伺服器回的 Retry-After 秒數（429 限流等；沒有／非正數＝undefined）。團練同步跑（meetLiveApi）
+  // 的退避優先採用它（契約 GROUP_RUN_LIVE_CONTRACT.md §6）；其餘呼叫端不讀，加欄位不影響既有行為。
+  // body：解析後的錯誤 JSON（例如 409 outside_window 另帶 opens_at／closes_at，見 meetLiveApi）；非 JSON／空 body＝null。
+  constructor(public status: number, message: string, public retryAfterS?: number, public body?: Record<string, unknown> | null) {
     super(message)
   }
 }
@@ -599,7 +602,10 @@ async function request<T>(path: string, init?: RequestInit, retried = false): Pr
       data = null
     }
   }
-  if (!res.ok) throw new ApiError(res.status, data?.error ?? 'request failed')
+  if (!res.ok) {
+    const ra = Number(res.headers.get('Retry-After'))
+    throw new ApiError(res.status, data?.error ?? 'request failed', Number.isFinite(ra) && ra > 0 ? ra : undefined, data && typeof data === 'object' ? data : null)
+  }
   return data as T
 }
 
@@ -4747,6 +4753,18 @@ export interface RunMeetMemberDetail extends RunMeetDetailBase {
   lat: number | null // 與 lng 成對出現（同時 null 或同時有值）
   lng: number | null
   meeting_detail: string
+  // 團練同步跑（Group Run Live）入口資訊——契約 docs/runmeet/GROUP_RUN_LIVE_CONTRACT.md §2。
+  // ⚠️ 只在成員層 DTO（本型別）出現；RunMeetPublicDetail 結構上沒有這個欄位（非成員的 JSON 不會有 "live" key）。
+  // enabled=false＝該使用者的同步跑入口非 shown（hidden／locked／不在白名單）→ 前端不顯示按鈕。
+  // 時間欄位皆 RFC3339；前端用 server_now − Date.now() 修正手機時鐘偏差（見 lib/runMeet.ts runMeetLiveCta），
+  // 最終是否可開跑以 POST /run-meets/{id}/live/start 的回應為準。判定函式見 lib/runMeet.ts。
+  live?: {
+    enabled: boolean
+    opens_at: string    // meet_at − runmeet_live_pre_minutes
+    closes_at: string   // COALESCE(ends_at, meet_at + runmeet_live_default_hours) + runmeet_live_grace_minutes
+    server_now: string
+    presence_only: boolean // no_location 團：只顯示在跑人數，不分享位置
+  }
 }
 
 // 前端判斷：if (!d.location_locked) { 載入 Leaflet 地圖 + 標記 } else { 只顯示公開層 + location_note }
@@ -5001,6 +5019,54 @@ export const runMeetApi = {
     ),
   report: (token: string, id: string, body: { comment_id?: string; reason: string }) =>
     request<{ ok: boolean }>(`/run-meets/${id}/report`, { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+}
+
+// ── 團練同步跑（Group Run Live）：契約 docs/runmeet/GROUP_RUN_LIVE_CONTRACT.md §3（協定 pv=1）──
+// 使用端見 app/track/useMeetLive.ts。全部走 POST body（契約 §5：座標不得進 query string／log）。
+// 錯誤碼（ApiError.message＝後端 error 字串、.status＝HTTP 碼、.retryAfterS＝Retry-After 秒、.body＝解析後的錯誤 JSON）。
+// 後端定案（services/api/internal/runmeet/live/handler.go、runmeet/handler_live.go）：
+//   start：403 entry_closed／not_member／revoked、404 not_found、410 meet_over／killed、
+//          409 outside_window（body 另帶 opens_at／closes_at，RFC3339）、429 live_full、
+//          400 consent_required／bad_request／bad_sid、413 payload_too_large、426 upgrade_required、
+//          401 unauthorized（走一般會員 token 續期）、500 server_error、503 redis_unavailable
+//   pos：409 grant_missing／sid_mismatch、403 revoked、410 meet_over／killed、429 too_fast（Retry-After）、
+//        400 bad_request／bad_sid／bad_position（p 的 la/ln/ac/fa 四欄必填）、413、404、426、401、500、503
+//   leave：204（sid 不符也 204）；其餘同上
+export interface MeetLiveStartResp {
+  pv: number
+  n: number
+  sid: string
+  iv: number // 建議輪詢間隔（毫秒；依同步人數 5s/7s/10s）
+  presence_only: boolean
+  grant_ttl_s: number
+  reauth_in_s: number // grant 剩餘秒數 − 300（≤0 → 該靜默 start(reauth=true)）
+  meet: { id: string; title: string; lat?: number; lng?: number } // presence_only 團不帶 lat/lng
+  rv: number // 名冊版本
+  roster: [number, string][] // [n, 顯示名稱]
+  live: number
+  max_live: number
+  stale: { fade_s: number; gray_s: number; drop_s: number }
+  server_now_ms: number
+}
+export interface MeetLivePosResp {
+  pv: number
+  t: number
+  iv: number
+  live: number // 60 秒內有心跳的人數（含自己）
+  rv: number
+  own: 'ok' | 'need_own_fix' | 'presence_only'
+  reauth_in_s: number
+  roster?: [number, string][] // 僅當請求的 rv ≠ 伺服器 rv 時附上（完整名冊）
+  p?: [number, number, number, number, number][] // [n, la, ln, age_s, acc]（不含自己）
+}
+export const meetLiveApi = {
+  start: (token: string, meetId: string, body: { pv: 1; sid: string; consent_v?: number; reauth: boolean }, signal?: AbortSignal) =>
+    request<MeetLiveStartResp>(`/run-meets/${meetId}/live/start`, { method: 'POST', headers: withAuth(token), body: JSON.stringify(body), signal }),
+  pos: (token: string, meetId: string, body: { pv: 1; sid: string; rv?: number; p?: { la: number; ln: number; ac: number; fa: number } }, signal?: AbortSignal) =>
+    request<MeetLivePosResp>(`/run-meet-live/${meetId}/pos`, { method: 'POST', headers: withAuth(token), body: JSON.stringify(body), signal }),
+  // keepalive：頁面結束／離開時送出，失敗無妨（契約 §3.3：後端回 204、不寫墓碑）。
+  leave: (token: string, meetId: string, body: { pv: 1; sid: string }) =>
+    request<void>(`/run-meet-live/${meetId}/leave`, { method: 'POST', headers: withAuth(token), body: JSON.stringify(body), keepalive: true }),
 }
 
 // 後台（RequireAuth → RequireAdmin → Audit → perm('run_meets')）

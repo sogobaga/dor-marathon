@@ -219,6 +219,8 @@ func (h *Handler) AdminTakedown(w http.ResponseWriter, r *http.Request) {
 		respondAPIErr(w, err)
 		return
 	}
+	// 團練同步跑：後台強制下架＝同步終止（單一 UPDATE autocommit，到這裡已落盤；失敗只記 log）。
+	h.repo.liveMarkDead(r.Context(), id)
 	msg := "你發起的團練「" + title + "」已被管理員下架。"
 	if reason != "" {
 		msg += "原因：" + reason
@@ -237,15 +239,23 @@ func (h *Handler) AdminRestore(w http.ResponseWriter, r *http.Request) {
 		respondAPIErr(w, errBadID)
 		return
 	}
-	tag, err := h.db.Exec(r.Context(), `
-		UPDATE run_meets SET hidden_by_admin=FALSE, hidden_reason='', updated_at=NOW() WHERE id=$1`, id)
+	var status string
+	var deleted bool
+	err := h.db.QueryRow(r.Context(), `
+		UPDATE run_meets SET hidden_by_admin=FALSE, hidden_reason='', updated_at=NOW() WHERE id=$1
+		RETURNING status, (deleted_at IS NOT NULL)`, id).Scan(&status, &deleted)
+	if errors.Is(err, pgx.ErrNoRows) {
+		respondAPIErr(w, errNotFound)
+		return
+	}
 	if err != nil {
 		respondAPIErr(w, err)
 		return
 	}
-	if tag.RowsAffected() == 0 {
-		respondAPIErr(w, errNotFound)
-		return
+	// 團練同步跑：取消下架要清掉 AdminTakedown 寫的 dead 旗標。團練若同時是已中止或已刪除，dead 必須
+	// 保留（中止者由 SetStatus 的恢復路徑清除）——所以只在「完全可用」時才清。
+	if !deleted && status != StatusCancelled {
+		h.repo.liveClearDead(r.Context(), id)
 	}
 	h.notifyMembers(r.Context(), id)
 	respondJSON(w, http.StatusOK, map[string]bool{"ok": true})

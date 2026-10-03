@@ -474,6 +474,52 @@ export const SETTINGS_SPECS: SettingSpec[] = [
     help: '團練開跑前幾小時發送提醒（站內信 + Email，一人有多場只合併發一封）。每場團練只會提醒一次，不會因為改這個值而補發或重發。',
     min: 1, max: 72, def: '3',
   },
+  // ── 團練同步跑（見 services/api/internal/runmeet/live、docs/runmeet/GROUP_RUN_LIVE_CONTRACT.md §2）──
+  // 跑步時在地圖上互相看到同一團練夥伴位置的功能。不需 migration：後端對沒有列的 key 一律用程式預設
+  // （入口 whitelist、50 人、集合前 30 分、未填結束時間視為 3 小時、結束後 30 分）。
+  // ⚠️ 入口狀態同時是「緊急開關」：選 hidden 會讓後端立即寫入全域關閉旗標（所有人含超管都停）。
+  // ⚠️ 白名單那列務必 type:'text'（理由見上面「團練邀請入口」的警告：誤設成 number 會被寫成字串 "NaN"）。
+  // ⚠️ 中文顯示一律「團練」，不得寫成「跑團」。
+  {
+    key: 'runmeet_live_entry_state', group: '團練同步跑', label: '同步跑入口狀態', type: 'select', def: 'whitelist',
+    help: '控制團練詳情頁的「🏃 開始跑步」（跑步時在地圖上互相看到夥伴位置）對誰開放。'
+      + '【緊急關閉】所有人（連超管都不行）立即停止同步，正在跑的人在下一次更新時就會被中止；只影響「夥伴位置同步」，個人跑步與 GPS 記錄完全不受影響，出狀況時選這個。'
+      + '【暫停開跑】不顯示「開始跑步」按鈕、新的同步開不了（超管仍可用）；已經在同步的人不會被立刻中斷，稍後自然結束。'
+      + '【僅指定帳號】只有下方白名單帳號（與超管）看得到按鈕，適合測試期，預設值。'
+      + '【全部開放】所有已加入團練的成員（含發起人）都看得到按鈕。',
+    options: [
+      { value: 'hidden', label: '緊急關閉（所有人立即停止同步）' },
+      { value: 'locked', label: '暫停開跑（不顯示按鈕，超管仍可用）' },
+      { value: 'whitelist', label: '僅指定帳號可用（下方白名單＋超管）' },
+      { value: 'open', label: '全部開放（團練成員都能用）' },
+    ],
+  },
+  {
+    key: 'runmeet_live_whitelist', group: '團練同步跑', label: '指定帳號白名單', type: 'text', def: '',
+    help: '僅在上方選「僅指定帳號可用」時生效。一行一個，可填帳號編碼（#可省）或註冊 Email。超管不用列在這裡，恆可使用。',
+    placeholder: '#8U2TGUWE\nsomeone@example.com', rows: 4,
+  },
+  {
+    key: 'runmeet_live_max', group: '團練同步跑', label: '同一團練同步人數上限', type: 'number', unit: '人',
+    help: '同一個團練「同時」最多幾個人可以互相看到位置。額滿後，後來的人仍可正常跑步與記錄，只是不加入同步（畫面會提示「同步名額已滿」）。'
+      + '人數越多，手機與伺服器的負擔越大；系統會依同步人數自動調整更新頻率（20 人以內約每 5 秒、21–35 人約每 7 秒、36 人以上約每 10 秒）。',
+    min: 2, max: 200, def: '50',
+  },
+  {
+    key: 'runmeet_live_pre_minutes', group: '團練同步跑', label: '集合前幾分鐘開放', type: 'number', unit: '分鐘',
+    help: '「開始跑步」按鈕從團練集合時間的前幾分鐘開始可以按（預設 30＝集合前 30 分鐘）；0＝到集合時間才開放。在那之前按鈕是灰色的，並標示幾點開放。',
+    min: 0, max: 180, def: '30',
+  },
+  {
+    key: 'runmeet_live_default_hours', group: '團練同步跑', label: '沒填結束時間的團練視為進行幾小時', type: 'number', unit: '小時',
+    help: '較早建立的團練沒有「結束時間」，系統就用「集合時間＋這個小時數」當作結束時間，來計算開放時段（預設 3 小時）。有填結束時間的團練不受影響。',
+    min: 1, max: 12, def: '3',
+  },
+  {
+    key: 'runmeet_live_grace_minutes', group: '團練同步跑', label: '結束後多久關閉', type: 'number', unit: '分鐘',
+    help: '團練結束（或上面推算的結束時間）之後，「開始跑步」還可以再按幾分鐘（預設 30），讓晚收操、晚到的人也能加入同步；超過後按鈕消失、新的同步開不了。0＝結束就關閉。',
+    min: 0, max: 180, def: '30',
+  },
   // ── 虛擬選手展示稱號（見 services/api/internal/virtualrunner/titles.go）──
   // 2026-09-03 決策：展示稱號改「全隨機」（不再挑類別內最高階），每累積達 N 趟就重抽一次；N 在此可調。
   {

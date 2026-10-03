@@ -19,6 +19,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"google.golang.org/api/idtoken"
 
+	"github.com/dor/api/internal/cache"
 	"github.com/dor/api/internal/notify"
 )
 
@@ -76,8 +77,11 @@ type Claims struct {
 }
 
 type Service struct {
-	repo           *Repository
-	rdb            *redis.Client
+	repo *Repository
+	rdb  *redis.Client
+	// denylist checkDenylist 專用的 Redis 存取點：每次查詢有 denylistTimeout（300ms）的**真**硬期限
+	// （與 rdb 共用連線池，見 cache.Bounded）。rdb 為 nil 時為 nil。
+	denylist       *cache.Bounded
 	jwtSecret      []byte
 	accessTTL      time.Duration
 	refreshTTL     time.Duration
@@ -97,6 +101,7 @@ func NewService(repo *Repository, rdb *redis.Client, jwtSecret string, accessTTL
 	return &Service{
 		repo:           repo,
 		rdb:            rdb,
+		denylist:       cache.NewBounded(rdb, denylistTimeout),
 		jwtSecret:      []byte(jwtSecret),
 		accessTTL:      accessTTL,
 		refreshTTL:     refreshTTL,
@@ -770,6 +775,12 @@ func (s *Service) validateAccess(ctx context.Context, tokenStr string, ignoreExp
 // 的讀取逾時（秒級）才 fail-open，故另給 300ms 的獨立上限——查不到／逾時一律放行並記 Warn（沿用
 // 既有 refresh denylist「查無＝放行」政策），撤銷檢查退化為盡力而為，不影響可用性。
 //
+// ⚠️ 這個 300ms 必須是「真的」：2026-10-02 前它只是 context.WithTimeout(ctx, 300ms) 包住 rdb.Exists，
+// 但 go-redis v9 不會因 context 期限而中斷 socket 讀取——Redis 卡死（連線建立了、不回話）時實測會等一整個
+// ReadTimeout（5.02 秒），也就是 Redis 一卡死全站每個已登入請求都多卡 5 秒（連線被拒才會真的在 300ms 內失敗）。
+// 現在走 s.denylist（cache.Bounded：與 rdb 共用連線池、讀寫逾時 = 300ms + context 期限），機制與取捨見
+// cache/bounded.go；denylist_failfast_test.go 以「黑洞 Redis」證明。政策不變：一般會員 fail-open、admin fail-closed。
+//
 // 2026-09-08 audit finding 3(e)：一般會員維持既有 fail-open（不能讓 Redis 短暫抖動變成全站
 // 中斷）；admin token fail-closed——admin 能操作的範圍（後台改資料、退費、發送廣播…）風險
 // 遠高於一般會員，寧可讓後台在 Redis 故障時暫時 503（前端可重試），也不要讓一顆本該被撤銷
@@ -779,9 +790,16 @@ func (s *Service) validateAccess(ctx context.Context, tokenStr string, ignoreExp
 // 2026-09-10：抽成獨立方法，供 validateAccess 與 RevalidateAccessTokenNoDB（WS 背景重驗，
 // 刻意不查 DB，見該函式說明）共用同一份政策，避免兩處各維護一份容易日後改一邊漏改另一邊。
 func (s *Service) checkDenylist(ctx context.Context, claims *Claims, tokenStr string) error {
-	rctx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
-	defer cancel()
-	if exists, err := s.rdb.Exists(rctx, revocationKey(claims, tokenStr)).Result(); err != nil {
+	var exists int64
+	var err error
+	if s.denylist == nil { // 沒有 Redis：與查詢失敗同一套政策
+		err = errors.New("redis not configured")
+	} else {
+		rctx, cancel := s.denylist.Ctx(ctx)
+		exists, err = s.denylist.C.Exists(rctx, revocationKey(claims, tokenStr)).Result()
+		cancel()
+	}
+	if err != nil {
 		if claims.Role == "admin" {
 			log.Printf("auth.checkDenylist: WARN redis exists check failed, fail-closed for admin user=%s err=%v", claims.UserID, err)
 			return ErrAuthUnavailable
@@ -792,6 +810,9 @@ func (s *Service) checkDenylist(ctx context.Context, claims *Claims, tokenStr st
 	}
 	return nil
 }
+
+// denylistTimeout checkDenylist 每次 Redis 查詢的硬期限（見該函式說明）。
+const denylistTimeout = 300 * time.Millisecond
 
 // sessionCacheTTL 見 Service.sessionCache 欄位註解：ValidateAccessToken 每個受保護請求都可能
 // 查一次 role/session_epoch/tokens_not_before，這裡快取縮短 DB 查詢量；60 秒是「立即生效」與

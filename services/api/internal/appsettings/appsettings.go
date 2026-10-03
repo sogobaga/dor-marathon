@@ -146,6 +146,15 @@ var specs = map[string]func(string) bool{
 	"runmeet_comment_daily_cap":     isPosIntMax(1000),                                              // 每人每日留言則數上限
 	"runmeet_reject_cooldown_hours": isNonNegInt,                                                    // 被婉拒後多久才能再申請（0=不冷卻）
 	"runmeet_ended_visible_days":    isPosIntMax(365),                                               // 已結束的團在探索折疊區保留天數
+	// 團練同步跑（見 internal/runmeet/live、docs/runmeet/GROUP_RUN_LIVE_CONTRACT.md §2；不需 migration，
+	// 無列時用程式預設）。入口四態 hidden|locked|whitelist|open，**沒有 off**（hidden 就是緊急關閉：
+	// 後台寫入 hidden 時 runmeet 經 OnChange 回呼 SET rml:kill，對所有人含超管關閉）。
+	"runmeet_live_entry_state":   isLiveEntryState,    // 預設 whitelist
+	"runmeet_live_whitelist":     isWhitelist,         // 格式同 runmeet_entry_whitelist
+	"runmeet_live_max":           isIntRange(1, 200),  // 同一團練同時同步人數上限（預設 50；上限與 live.MaxLiveCeiling 同步）
+	"runmeet_live_pre_minutes":   isIntRange(0, 1440), // 開放起點 = meet_at − 此值（預設 30）
+	"runmeet_live_default_hours": isIntRange(1, 24),   // ends_at 為 NULL 時，結束 = meet_at + 此值（預設 3）
+	"runmeet_live_grace_minutes": isIntRange(0, 1440), // 開放終點 = 結束 + 此值（預設 30）
 	// 開跑前提醒（見 internal/runmeet/reminder.go，migration 163）：站內信 + Email，排程每小時掃描。
 	"runmeet_reminder_enabled": func(v string) bool { return v == "" || v == "0" || v == "1" }, // 總開關，'1' 才跑
 	"runmeet_reminder_hours":   isPosIntMax(72),                                                // 開跑前幾小時發送（預設 3）
@@ -211,6 +220,25 @@ func isPosIntMax(max int) func(string) bool {
 		n, err := strconv.Atoi(v)
 		return err == nil && n >= 1 && n <= max
 	}
+}
+
+// isIntRange 回傳一個驗證器：空字串(用程式內建預設)或 [min,max] 內的整數。與 isPosIntMax 的差別是
+// 下限可為 0（例如「開放起點提前 0 分鐘」是合法設定）。
+func isIntRange(min, max int) func(string) bool {
+	return func(v string) bool {
+		if v == "" {
+			return true
+		}
+		n, err := strconv.Atoi(v)
+		return err == nil && n >= min && n <= max
+	}
+}
+
+// isLiveEntryState 團練同步跑入口狀態驗證器（見 internal/runmeet/live）：hidden|locked|whitelist|open，
+// 空字串＝缺鍵（讀取端套預設 whitelist）。刻意不共用 isEntryState——這個入口沒有 "off"：hidden 本身就是
+// 「緊急關閉」（後台寫入 hidden 時 OnChange 回呼會 SET 全域 kill 旗標，連超管一併關閉），不需要第二種更強的關閉態。
+func isLiveEntryState(v string) bool {
+	return v == "" || v == "hidden" || v == "locked" || v == "whitelist" || v == "open"
 }
 
 // isFloatRange 回傳一個驗證器：空字串(用程式內建預設)或落在 [min,max] 的有限浮點數（允許小數）。
@@ -430,8 +458,77 @@ func (h *Handler) Set(w http.ResponseWriter, r *http.Request) {
 	}
 	invalidateSettingsCache()
 	publicSettingsCache.Invalidate()
+	// 後台成功寫入後通知「訂閱這個 key 的套件」（例如團練同步跑的緊急關閉旗標）。放在 DB 寫入與
+	// 快取失效之後、WS 廣播之前；回呼不得擋住儲存（NotifyChange 攔 panic，錯誤記錄由回呼自己負責）。
+	NotifyChange(r.Context(), key, val)
 	h.rt.PublishData(r.Context(), "settings", nil)
 	respondJSON(w, http.StatusOK, map[string]any{"settings": h.queryAll(r.Context(), false)})
+}
+
+// ValidateValue 以 specs 的驗證器檢查某個設定值（known=false 代表 key 未登記）。純函式，
+// 供其他套件的測試對照自己用到的上限／允許值是否與後台驗證器一致。
+func ValidateValue(key, value string) (known, valid bool) {
+	validate, ok := specs[key]
+	if !ok {
+		return false, false
+	}
+	return true, validate(strings.TrimSpace(value))
+}
+
+// ---- key 變更回呼（OnChange）----
+//
+// 動機（團練同步跑緊急關閉，契約 §4 M2）：/pos 熱路徑不讀設定，後台把入口改成 hidden 時必須
+// 立即讓進行中的 grant 失效。appsettings 不能 import 使用端套件（runmeet 已 import appsettings，反向
+// 會循環），所以反過來——使用端註冊回呼，本套件只負責在「後台 Set handler 成功寫入」後通知。
+//
+// 只涵蓋 Set handler 這條路徑；直接下 SQL 寫 app_settings（例如 migration 或 InvalidateCache 的
+// 呼叫端）不會觸發回呼，使用端須自行評估是否可接受（團練同步跑：不觸發也只是 grant 有界過期 15 分鐘）。
+
+var onChange = struct {
+	mu   sync.RWMutex
+	next int
+	fns  map[string]map[int]func(ctx context.Context, value string)
+}{fns: map[string]map[int]func(ctx context.Context, value string){}}
+
+// OnChange 註冊「key 被後台成功寫入」的回呼，回傳取消註冊函式（測試用；正式環境註冊一次不取消）。
+// 回呼在 Set handler 的 goroutine 內同步執行，帶 3 秒逾時、與請求取消脫鉤；panic 會被攔下。
+func OnChange(key string, fn func(ctx context.Context, value string)) (unregister func()) {
+	onChange.mu.Lock()
+	defer onChange.mu.Unlock()
+	onChange.next++
+	id := onChange.next
+	if onChange.fns[key] == nil {
+		onChange.fns[key] = map[int]func(ctx context.Context, value string){}
+	}
+	onChange.fns[key][id] = fn
+	return func() {
+		onChange.mu.Lock()
+		defer onChange.mu.Unlock()
+		delete(onChange.fns[key], id)
+	}
+}
+
+// NotifyChange 觸發某 key 已註冊的所有回呼。Set handler 在成功寫入後呼叫；匯出是為了讓使用端能在
+// 不碰 DB 的單元測試裡驗證「註冊的回呼確實會動作」。回呼 panic 不得影響後台儲存設定這個主流程。
+func NotifyChange(ctx context.Context, key, value string) {
+	onChange.mu.RLock()
+	fns := make([]func(ctx context.Context, value string), 0, len(onChange.fns[key]))
+	for _, fn := range onChange.fns[key] {
+		fns = append(fns, fn)
+	}
+	onChange.mu.RUnlock()
+	if len(fns) == 0 {
+		return
+	}
+	// 與請求取消脫鉤：後台請求即使在寫入後立刻被取消，緊急關閉旗標也必須寫得進去。
+	cbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer cancel()
+	for _, fn := range fns {
+		func() {
+			defer func() { _ = recover() }()
+			fn(cbCtx, value)
+		}()
+	}
 }
 
 // ---- 套件內記憶體快取（60 秒 TTL）----

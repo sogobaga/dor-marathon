@@ -56,6 +56,7 @@ import (
 	"github.com/dor/api/internal/rpg"
 	"github.com/dor/api/internal/runcheer"
 	"github.com/dor/api/internal/runmeet"
+	"github.com/dor/api/internal/runmeet/live"
 	"github.com/dor/api/internal/training"
 	"github.com/dor/api/internal/version"
 	"github.com/dor/api/internal/virtualrunner"
@@ -652,6 +653,15 @@ func main() {
 			// per-route 限流（建立 5/h、上傳圖 20/h、密碼 10/min＋每團每人失敗計數…）。
 			r.With(middleware.RateLimit(rdb, "runmeet", 120, time.Minute, middleware.UserOrIP)).
 				Mount("/run-meets", runMeetHandler.Router())
+
+			// 團練同步跑熱路徑（見 internal/runmeet/live、docs/runmeet/GROUP_RUN_LIVE_CONTRACT.md §3）：
+			// POST /run-meet-live/{id}/pos 與 /leave。純 Redis、零 PostgreSQL，所以刻意**不**掛在上面的
+			// /run-meets（它的 Router 第一行 requireEntry 每請求查 DB）。
+			// ⚠️ 必須留在這個 r.Group 內：RequireAuth 要先於 RateLimit 執行，UserOrIP 才會得到 "u<uid>"
+			// （否則退回 IP 維度，50 人同出口 IP 共用一個 60/分的桶）。順序由 cmd/api/wiring_test.go 與
+			// live 套件的 TestRouteOrder* 守住。
+			r.With(middleware.RateLimit(rdb, "runmeet_live_pos", 60, time.Minute, middleware.UserOrIP)).
+				Mount("/run-meet-live", live.NewHandler(rdb).Router())
 
 			// Web Push 訂閱（VAPID 金鑰 + subscribe/unsubscribe）
 			r.Mount("/push", pushHandler.Router())

@@ -28,17 +28,29 @@ end
 return n
 `)
 
+// rateLimitRedisTimeout 限流中介層每次 Redis 往返的硬上限。
+//
+// 限流在幾乎每一條請求路徑的最前面，而且一條路由常常疊兩層（mount 級＋route 級）：Redis 卡死時，
+// go-redis 預設一個指令實測會卡 5 秒（全新連線）～10 秒（已建立的連線卡死：指令讀取逾時 5 秒 + 重試的
+// 握手再等 5 秒），兩層限流加上 handler 內的 Redis 呼叫就吃光 chi 的 30 秒 Timeout，之後的 handler 拿到
+// 已取消的 context（DB 查詢全部失敗、500）——2026-10-02 團練同步跑的真實 Redis 故障測試抓到。限流是「盡力而為」的防線（fail-open），沒有理由為它等超過 1 秒。
+// 逾時是**真的**：見 cache.Bounded（context 期限管不到 go-redis 的 socket 讀取，必須搭配 WithTimeout）。
+const rateLimitRedisTimeout = time.Second
+
 // RateLimit 用既有 Redis 做固定視窗計數限流，超限回 429（SEC-H1）。
 // action 是限流動作名稱（如 "auth"、"monopoly_roll"），與 dim(r)（IP、userID 或帳號）組出
 // cache.RateLimitKey。同一路由可疊加多個 RateLimit（不同 dim/action）做多維度防線，
 // 例如 /auth/login 同時掛 ClientIP（縱深防禦）與 AccountField("email")（帳號維度，
 // 見該函式註解——這維度不像 IP 可被偽造的標頭繞過）。
 // dim(r) 回傳空字串時視為無法判斷維度，不限流（避免誤擋，交由其他把關機制處理）。
-// Redis 為 nil 或連線出錯時 fail-open（不放行機制本身變成單點故障，擋掉所有正常流量）。
+// Redis 為 nil、連線出錯或逾時（rateLimitRedisTimeout）時 fail-open（不放行機制本身變成單點故障，
+// 擋掉所有正常流量）：fail-open 時以**原始**請求 context 繼續往下游走——逾時只屬於這一次 Redis 往返，
+// 下游 handler 拿到的 context 不受影響（沒有被取消、也沒有被縮短的期限）。
 func RateLimit(rdb *redis.Client, action string, limit int, window time.Duration, dim func(*http.Request) string) func(http.Handler) http.Handler {
+	bounded := cache.NewBounded(rdb, rateLimitRedisTimeout) // rdb 為 nil 時回 nil
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if rdb == nil {
+			if bounded == nil {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -60,10 +72,12 @@ func RateLimit(rdb *redis.Client, action string, limit int, window time.Duration
 			}
 
 			key := cache.RateLimitKey(d, action)
-			ctx := r.Context()
-			n, err := incrExpireScript.Run(ctx, rdb, []string{key}, int(window.Seconds())).Int64()
+			rctx, cancel := bounded.Ctx(r.Context()) // 只屬於這一次 Redis 往返，不得傳給下游
+			n, err := incrExpireScript.Run(rctx, bounded.C, []string{key}, int(window.Seconds())).Int64()
+			cancel()
 			if err != nil {
-				// Redis 掛掉時放行，避免限流機制本身造成全站不可用。
+				// Redis 掛掉／卡死（逾時）時放行，避免限流機制本身造成全站不可用。
+				// 注意傳的是原始的 r（原始 context），不是 rctx。
 				next.ServeHTTP(w, r)
 				return
 			}

@@ -43,6 +43,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { FUEL_KIND_LABEL, type RaceStrategy, type StrategySegment } from '@/lib/api'
 import { fmtKm, goalProgressRatio, type RunGoal } from '@/lib/runGoal'
+import type { MeetLiveStats } from './meetLiveTypes'
+import { meetNearestText, meetStateParts } from './meetLiveUtil'
 
 // 未來科幻世界（scifi）變體專用（CONTRACT.md §1／§4.4）：大字數字改 Orbitron＋青色光暈，其餘 skin
 // 不受影響。2026-09-27 review 修正：本檔是 track/page.tsx 靜態 import、對所有 /track 訪客無條件掛載，
@@ -58,6 +60,7 @@ import { fmtKm, goalProgressRatio, type RunGoal } from '@/lib/runGoal'
 const OrbitronText = dynamic(() => import('./scifi/OrbitronText'), { ssr: false })
 
 const HOLD_MS = 1500 // 底部鎖頭長按離開專注模式所需時長（與舊 FocusLockScreen 解鎖時長一致）
+const MEET_MSG_HOLD_MS = 10000 // 團練同步跑：錯誤訊息至少停留這麼久（契約 §7）
 
 // 復古 RPG（retro）專注模式配色（CONTRACT_R3.md §3「專注模式狀態視窗＝深色皮革＋金框，數字米白」）：
 // 本疊層背景在所有 skin 下都維持接近純黑的漸層（上 45% 透地圖、下方漸黑，見 overlayRef 那個
@@ -127,7 +130,7 @@ type PaceDir = 'fast' | 'slow'
 
 export default function RaceFocusMode({
   strategy, distanceM, elapsed, avgPace, segLivePace, movingSegLivePace, hasSignal, goal,
-  initialOpen, openSignal, onOpenChange, scifi, retro, cute,
+  initialOpen, openSignal, onOpenChange, scifi, retro, cute, meetLive, onToggleShare,
 }: {
   strategy: RaceStrategy | null // null＝一般跑步/課表/個人任務等沒有賽事策略的情境，只顯示基本 4 大字指標
   distanceM: number // 目前有效距離（公尺）——與頁面主面板「距離」同一份數據（distRef）
@@ -162,6 +165,10 @@ export default function RaceFocusMode({
   // 運作的 CuteMap 與光點、數字區改白色貼紙卡（圓角 24px＋lineSoft 軟框＋白邊＋紙膠帶）、標題膠囊
   // 「一起加油！」、鎖頭改原創圓潤鎖頭圖示；與 scifi／retro 三者互斥（由父層依 activeSkin 分別傳
   // 入），長按 1.5 秒解除等行為完全不變。
+  meetLive?: MeetLiveStats // 團練同步跑（契約 docs/runmeet/GROUP_RUN_LIVE_CONTRACT.md §7）：有值＝團練模式。資訊區多兩行
+  // （role="status" aria-live="polite"）：同步狀態、最近 3 位夥伴（8 方位箭頭）；預設風格（無 skin）的底色在團練模式
+  // 改成與 skin 相同形狀的漸層（上 45% 透出地圖），其他模式維持 v850 純黑。省略＝非團練模式，行為與團練功能上線前完全相同。
+  onToggleShare?: () => void // 團練模式：暫停／恢復分享位置（專注模式內須「長按 1.5 秒」，與鎖頭同一手勢規格）
 }) {
   const [hidden, setHidden] = useState(() => !initialOpen)
   useEffect(() => { onOpenChange?.(!hidden) }, [hidden]) // eslint-disable-line react-hooks/exhaustive-deps -- 只在 hidden 變動（含掛載當下）通知父層，onOpenChange 允許每次 render 傳新的閉包
@@ -220,6 +227,60 @@ export default function RaceFocusMode({
   }, [holdTick])
 
   useEffect(() => () => { if (holdRafRef.current != null) cancelAnimationFrame(holdRafRef.current) }, [])
+
+  // ── 團練同步跑（契約 §7）──
+  // 「暫停／恢復分享位置」：專注模式整層攔截輸入，所以這顆控制鈕比照鎖頭——必須「長按 1.5 秒」才生效（同一手勢規格，
+  // 自己的 ref／進度 state，完全不碰上面鎖頭的長按邏輯，鎖頭行為不變）。這些 hook 必須在下方 hidden 早退之前呼叫。
+  const meetMode = !!meetLive
+  const [shareHold, setShareHold] = useState(0) // 0..1，長按進度
+  const shareRafRef = useRef<number | null>(null)
+  const shareStartRef = useRef(0)
+  const shareHoldingRef = useRef(false)
+  const onToggleShareRef = useRef(onToggleShare)
+  onToggleShareRef.current = onToggleShare
+  const stopShareHold = useCallback(() => {
+    shareHoldingRef.current = false
+    if (shareRafRef.current != null) { cancelAnimationFrame(shareRafRef.current); shareRafRef.current = null }
+    setShareHold(0)
+  }, [])
+  const shareTick = useCallback(() => {
+    if (!shareHoldingRef.current) return
+    const p = Math.min(1, (Date.now() - shareStartRef.current) / HOLD_MS)
+    setShareHold(p)
+    if (p >= 1) {
+      shareHoldingRef.current = false
+      shareRafRef.current = null
+      setShareHold(0)
+      try { navigator.vibrate?.(60) } catch { /* 無此 API 就略過 */ }
+      onToggleShareRef.current?.()
+      return
+    }
+    shareRafRef.current = requestAnimationFrame(shareTick)
+  }, [])
+  const startShareHold = useCallback((e: React.PointerEvent) => {
+    e.preventDefault(); e.stopPropagation()
+    shareHoldingRef.current = true
+    shareStartRef.current = Date.now()
+    shareRafRef.current = requestAnimationFrame(shareTick)
+  }, [shareTick])
+  useEffect(() => () => { if (shareRafRef.current != null) cancelAnimationFrame(shareRafRef.current) }, [])
+  // 同步錯誤訊息：新訊息出現時震動一下，並至少停留 MEET_MSG_HOLD_MS（即使 hook 很快因為恢復連線而清掉 message）。
+  // 放在本元件頂層（不是只在疊層開著才掛載的子元件）→ 專注模式關著、只剩浮動鈕時也會震動提醒。
+  const [heldMsg, setHeldMsg] = useState<string | null>(null)
+  const heldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const meetMsg = meetLive?.message
+  const meetMsgAt = meetLive?.messageAt
+  useEffect(() => {
+    if (!meetMsg || !meetMsgAt) return // 訊息被 hook 清掉（已恢復連線）：不動，讓已排的停留計時器自然到期
+    try { navigator.vibrate?.(200) } catch { /* 無此 API 就略過 */ }
+    setHeldMsg(meetMsg)
+    // ⚠️ 計時器放 ref、不能放在 effect 的 cleanup 裡清：messageAt 在「恢復連線」時會變回 undefined，cleanup 會把這顆
+    // 計時器清掉、而上面的 early return 又不會重排——訊息就永遠不會消失（E2E 抓到）。新訊息出現才重排（重新計 10 秒）。
+    if (heldTimerRef.current) clearTimeout(heldTimerRef.current)
+    heldTimerRef.current = setTimeout(() => { heldTimerRef.current = null; setHeldMsg(null) }, MEET_MSG_HOLD_MS)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在「新訊息（messageAt 變動）」時觸發
+  }, [meetMsgAt])
+  useEffect(() => () => { if (heldTimerRef.current) clearTimeout(heldTimerRef.current) }, [])
 
   // 目前所在分段：落在 [from_km, to_km) 的那一段；已超過總距離則沿用最後一段的目標配速繼續顯示
   // （以下 strategy 專屬邏輯全部短路：無 strategy 時維持安全的空/零值，不渲染對應區塊）
@@ -357,9 +418,13 @@ export default function RaceFocusMode({
           // 8 位十六進位色（含 alpha）直接複用 CUTE_BLUSH 常數，不必另外拆 rgba 三通道
           // （1a/52/eb ≈ 10%/32%/92% alpha，對應第一輪原本的漸層停駐點）。
           ? `linear-gradient(to bottom, ${CUTE_BLUSH}1a 0%, ${CUTE_BLUSH}52 45%, ${CUTE_BLUSH}eb 55%, ${CUTE_BLUSH}eb 100%)`
+          : meetMode
+          // 團練同步跑（契約 §7）：預設風格在團練模式「不再純黑」——與 skin 相同形狀的漸層（上 45% 透出下方
+          // 仍在運作的 Leaflet 地圖與夥伴亮點，下方轉為實色），其他模式（meetLive 省略）仍是下面的 v850 純黑。
+          ? 'linear-gradient(to bottom, rgba(0,0,0,.12) 0%, rgba(0,0,0,.32) 45%, rgba(0,0,0,.94) 55%, rgba(0,0,0,.94) 100%)'
           : '#000',
         color: retro ? RETRO_CREAM : cute ? CUTE_BERRY : 'var(--tx)', display: 'flex', flexDirection: 'column', alignItems: 'center',
-        justifyContent: (scifi || retro || cute) ? 'flex-end' : 'space-between', gap: (scifi || retro || cute) ? '2.4vh' : undefined,
+        justifyContent: (scifi || retro || cute || meetMode) ? 'flex-end' : 'space-between', gap: (scifi || retro || cute || meetMode) ? '2.4vh' : undefined,
         padding: '24px 20px calc(20px + env(safe-area-inset-bottom))',
         textAlign: 'center', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none',
       }}
@@ -368,7 +433,14 @@ export default function RaceFocusMode({
       // {passive:false} 監聽器攔截（JSX onWheel/onTouchMove 對這兩個事件是 no-op，見上方宣告處說明）。
       onContextMenu={(e) => e.preventDefault()}
     >
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.6vh', width: '100%' }}>
+      <div style={{
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.6vh', width: '100%',
+        // 團練＋預設風格：整組內容靠 flex-end 推到下半部（與 skin 相同），但進度條＋標題用 marginBottom:'auto' 釘回最頂端
+        // （v850 預設版型本來就把它放最上面）——它剛好落在題列（visibility:hidden 仍佔位）那條深色帶上，不會蓋住
+        // 透出的地圖與夥伴亮點。仍給一塊半透明深色底：淺色字（--tx-dim）不能依賴底下一定是深色（淺色風格的題列帶是淺色）。
+        // 只在這個組合；scifi／retro／cute 各有自己的處理，其他模式（無 meetLive）完全不變。
+        ...(meetMode && !scifi && !retro && !cute ? { background: 'rgba(0,0,0,.78)', borderRadius: 14, padding: '8px 12px', boxSizing: 'border-box' as const, marginBottom: 'auto' } : {}),
+      }}>
         <GoalProgressBar goal={goal} distanceM={distanceM} elapsed={elapsed} retro={retro} cute={cute} />
 
         {/* retro／cute 標題文案：retro 是緞帶（CONTRACT_R3.md §3），cute 是膠囊「一起加油！」
@@ -465,6 +537,19 @@ export default function RaceFocusMode({
           <span style={{ width: 7, height: 7, borderRadius: '50%', background: retro ? (hasSignal ? RETRO_GOLD : RETRO_DIM) : cute ? (hasSignal ? CUTE_CANDY : CUTE_BERRY_DIM) : (hasSignal ? 'var(--fug)' : 'var(--tx-dim)') }} />
           {hasSignal ? 'GPS 訊號中' : 'GPS 訊號弱／無'}
         </div>
+        {/* 團練同步跑（契約 §7）：資訊區加兩行（同步狀態、最近 3 位夥伴，role="status" aria-live="polite"）＋
+            暫停／恢復分享位置（長按 1.5 秒）。同一個 z-3900 疊層內，不新增任何 fixed 層。 */}
+        {meetLive && (
+          <MeetLiveBlock
+            meetLive={meetLive}
+            heldMsg={heldMsg}
+            shareHold={shareHold}
+            onHoldStart={startShareHold}
+            onHoldStop={stopShareHold}
+            dim={retro ? RETRO_DIM : cute ? CUTE_BERRY_DIM : 'var(--tx-dim)'}
+            strong={retro ? RETRO_CREAM : cute ? CUTE_BERRY : 'var(--tx)'}
+          />
+        )}
       </div>
 
       {/* 底部鎖頭：長按 1.5 秒離開專注模式回到完整介面（原 FocusLockScreen 的長按環，見檔頭說明）。
@@ -492,6 +577,52 @@ export default function RaceFocusMode({
         </div>
         <div style={{ fontSize: 12, color: retro ? RETRO_DIM : cute ? CUTE_BERRY_DIM : 'var(--tx-dim)', fontWeight: 700 }}>長按 1.5 秒解除專注模式</div>
       </div>
+    </div>
+  )
+}
+
+// 團練同步跑的兩行狀態＋暫停分享控制（契約 GROUP_RUN_LIVE_CONTRACT.md §7）。文案由 meetLiveUtil 的 meetStateParts／
+// meetNearestText 產生（與非專注時的膠囊同一份）；名稱一律當 React 文字節點渲染（自動跳脫），不用 innerHTML。
+// 暫停分享：專注模式整層攔截輸入，故這顆控制鈕也要長按 1.5 秒（與鎖頭同一手勢規格，進度條填滿＝生效）。
+function MeetLiveBlock({ meetLive, heldMsg, shareHold, onHoldStart, onHoldStop, dim, strong }: {
+  meetLive: MeetLiveStats
+  heldMsg: string | null
+  shareHold: number
+  onHoldStart: (e: React.PointerEvent) => void
+  onHoldStop: () => void
+  dim: string
+  strong: string
+}) {
+  const parts = meetStateParts(meetLive)
+  const nearest = meetNearestText(meetLive)
+  const paused = meetLive.state === 'paused'
+  const canToggle = !meetLive.presenceOnly && (meetLive.state === 'live' || meetLive.state === 'need_fix' || meetLive.state === 'paused' || meetLive.state === 'reconnecting' || meetLive.state === 'error')
+  // 錯誤訊息（含已恢復但仍在 10 秒停留期內的）：與狀態備註相同就不重複顯示
+  const extra = heldMsg && heldMsg !== parts.note ? heldMsg : null
+  return (
+    <div data-meet-focus-block="1" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, maxWidth: '92vw' }}>
+      <div role="status" aria-live="polite" data-meet-focus-state="1" style={{ fontSize: 13.5, fontWeight: 800, color: strong, lineHeight: 1.45 }}>
+        {parts.base}
+        {parts.note && <div style={{ fontSize: 11, fontWeight: 600, color: dim, lineHeight: 1.4 }}>{parts.note}</div>}
+        {extra && <div style={{ fontSize: 11, fontWeight: 700, color: strong, lineHeight: 1.4 }}>⚠ {extra}</div>}
+      </div>
+      <div role="status" aria-live="polite" data-meet-focus-nearest="1" style={{ fontSize: 12.5, fontWeight: 700, color: dim, minHeight: 18, lineHeight: 1.5, wordBreak: 'keep-all' }}>{nearest}</div>
+      {canToggle && (
+        <div
+          onPointerDown={onHoldStart}
+          onPointerUp={onHoldStop}
+          onPointerLeave={onHoldStop}
+          onPointerCancel={onHoldStop}
+          role="button"
+          aria-label={paused ? '長按 1.5 秒恢復分享位置' : '長按 1.5 秒暫停分享位置'}
+          data-meet-share-hold="1"
+          style={{ position: 'relative', overflow: 'hidden', minHeight: 44, padding: '10px 18px', borderRadius: 999, border: `1.5px solid ${dim}`, color: strong, fontSize: 13, fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }}
+        >
+          <div aria-hidden style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${Math.round(shareHold * 100)}%`, background: 'rgba(255,138,61,.5)' }} />
+          <span style={{ position: 'relative' }}>{paused ? '▶ 恢復分享位置' : '⏸ 暫停分享位置'}</span>
+          <span style={{ position: 'relative', fontSize: 11, fontWeight: 600, color: dim }}>長按 1.5 秒</span>
+        </div>
+      )}
     </div>
   )
 }

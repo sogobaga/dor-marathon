@@ -1295,3 +1295,8 @@ html[data-skin="retro"] #track-map-area,
 html[data-skin="retro"] #hist-map-area { background: #3cbc3c; }
 html[data-skin="cute"] #track-map-area,
 html[data-skin="cute"] #hist-map-area { background: #fff5f8; }
+
+/* 團練同步跑：詳情頁的「🏃 開始跑步」那一列（[data-live-row]）在畫面上時，不顯示「把 DOR 下載到手機」提示卡
+   （[data-pwa-install-card]，fixed 在底部 84px，正好壓在那一列上——2026-10-03 E2E 實測整顆按鈕被蓋住、點不到）。
+   純 CSS、沒有計時器或監聽；不支援 :has() 的舊瀏覽器整條規則失效＝維持原樣。 */
+body:has([data-live-row]) [data-pwa-install-card] { display: none !important; }
