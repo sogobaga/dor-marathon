@@ -47,3 +47,6 @@ source/data/files/*.xlsx
 
 # 暫停中的 favicon（另一專案項目，非 DOR）；日後要正式加 DOR favicon.ico 時移除此行
 apps/web/public/ui/icons/favicon.ico
+
+# 合作夥伴的保密文件（Garmin 開發者協議／API 規格 PDF 等）——repo 是公開的，絕不可提交（2026-10-03）
+source/docs/
