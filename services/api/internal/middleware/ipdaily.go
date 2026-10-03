@@ -195,6 +195,10 @@ func (a *IPDailyAggregate) cleanupOldDays(ctx context.Context, today string) {
 // Run 背景排程：每 ipDailyFlushInterval flush 一次 in-memory 聚合結果，並在每天第一次 flush 時順手
 // 清理過期資料。ctx 取消時另開一個沒有時限的 context 做最後一次 flush（盡量不遺漏 graceful shutdown
 // 當下還沒寫進 DB 的資料）再結束。比照 internal/ops 排程 loop 的骨架（RunSelfCheckLoop 等）。
+//
+// ⚠️ 關機契約：最後一次 flush 是在 Run 返回之前同步做完的，所以呼叫端（cmd/api/main.go）必須等 Run 返回
+// 才能關閉 DB pool；否則 pool.Close() 會把這次還在連線／寫入中的 flush 取消，上次 flush 之後的計數全部遺失
+// （2026-10-03 部署實測：flush upsert failed … operation was canceled）。
 func (a *IPDailyAggregate) Run(ctx context.Context) {
 	t := time.NewTicker(ipDailyFlushInterval)
 	defer t.Stop()

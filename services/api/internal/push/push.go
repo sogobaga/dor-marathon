@@ -20,6 +20,7 @@ import (
 	webpush "github.com/SherClockHolmes/webpush-go"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/dor/api/internal/auth"
@@ -157,10 +158,19 @@ type MailInserter interface {
 	InsertForUsers(ctx context.Context, userIDs []string, level, title, body, url string) (int, error)
 }
 
+// pgExecutor 是 Handler 用到的最小 DB 介面（Query/QueryRow/Exec）：*pgxpool.Pool 直接滿足，
+// 單元測試可換成記錄 SQL 的假實作，驗證 Broadcast／SendToUser 到底查了什麼、送了誰
+// （比照 internal/reward 的 pgExecutor）。
+type pgExecutor interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
 // Handler 掛載 /push（需登入）、/admin/push（需 settings 權限）與
 // /admin/push-groups（帳號群組 CRUD，見 groups.go）路由。
 type Handler struct {
-	db     *pgxpool.Pool
+	db     pgExecutor
 	cfg    Config
 	mailer *mailer.Mailer
 	mail   MailInserter
@@ -285,6 +295,12 @@ func (h *Handler) Broadcast(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// 空對象保護：race／group 目前沒有任何成員時整則不送（推播／Email／站內信一律不送）、回 400 讓後台看到原因。
+	// 曾經只有 email／mail 頻道對「空」安全，推播頻道把空清單當成「全站訂閱者」送出。
+	if err := checkBroadcastAudience(userIDs, isAll); err != nil {
+		respondErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	recipients := len(userIDs)
 	if isAll {
@@ -297,11 +313,14 @@ func (h *Handler) Broadcast(w http.ResponseWriter, r *http.Request) {
 
 	pushSent, pushFailed := 0, 0
 	if slices.Contains(body.Channels, "push") && h.cfg.enabled() {
-		targetIDs := userIDs
+		// 全體／指定對象走不同函式：空清單絕不會退化成「全部訂閱」（見 listSubscriptionsFor）。
+		var subs []storedSubscription
+		var err error
 		if isAll {
-			targetIDs = nil // listSubscriptions 空陣列＝全部
+			subs, err = h.listAllSubscriptions(r.Context())
+		} else {
+			subs, err = h.listSubscriptionsFor(r.Context(), userIDs)
 		}
-		subs, err := h.listSubscriptions(r.Context(), targetIDs)
 		if err != nil {
 			respondErr(w, http.StatusInternalServerError, "failed to load subscriptions")
 			return
@@ -381,8 +400,22 @@ func (h *Handler) listUserIDs(ctx context.Context, userIDs []string, isAll bool)
 	return ids, rows.Err()
 }
 
+// errEmptyAudience race／group 目標目前沒有任何成員（見 checkBroadcastAudience）。訊息會原樣顯示在後台。
+var errEmptyAudience = errors.New("目標對象目前沒有任何會員，未送出")
+
+// checkBroadcastAudience 目標對象保護：只有 isAll=true 才代表「全體」；非全體卻解析出 0 位會員
+// （race／group 沒有任何有效成員）時回 errEmptyAudience，呼叫端轉 400 且不得往任何頻道送。
+// target_type=all 依 resolveBroadcastTargets 契約 userIDs 恆為空，所以只看 isAll、不看清單長度。
+func checkBroadcastAudience(userIDs []string, isAll bool) error {
+	if !isAll && len(userIDs) == 0 {
+		return errEmptyAudience
+	}
+	return nil
+}
+
 // resolveBroadcastTargets 依 target_type 解析出目標 user_id 清單。
-// target_type=all 時 userIDs 恆為空、isAll=true（呼叫端各自決定「空＝全部」的查法）。
+// target_type=all 時 userIDs 恆為空、isAll=true；其餘型別 isAll=false，userIDs 為空代表「沒有任何對象」
+// （不是全部——由 checkBroadcastAudience 擋下，各頻道的查詢函式也都不得把空清單當全體）。
 // 目標無效或必填參數缺漏回 error（呼叫端轉 400）。
 func (h *Handler) resolveBroadcastTargets(ctx context.Context, targetType, identifier, raceID, groupID string) (userIDs []string, isAll bool, err error) {
 	switch targetType {
@@ -510,20 +543,33 @@ type storedSubscription struct {
 	Auth     string
 }
 
-func (h *Handler) listSubscriptions(ctx context.Context, targetUserIDs []string) ([]storedSubscription, error) {
-	var rows pgx.Rows
-	var err error
-	if len(targetUserIDs) == 0 {
-		rows, err = h.db.Query(ctx, `SELECT id, user_id, endpoint, p256dh, auth FROM push_subscriptions`)
-	} else {
-		rows, err = h.db.Query(ctx, `
-			SELECT id, user_id, endpoint, p256dh, auth FROM push_subscriptions
-			WHERE user_id = ANY($1)
-		`, targetUserIDs)
-	}
+// listAllSubscriptions 全站所有推播訂閱——只給 target_type=all 的全體廣播用。
+func (h *Handler) listAllSubscriptions(ctx context.Context) ([]storedSubscription, error) {
+	rows, err := h.db.Query(ctx, `SELECT id, user_id, endpoint, p256dh, auth FROM push_subscriptions`)
 	if err != nil {
 		return nil, err
 	}
+	return scanSubscriptions(rows)
+}
+
+// listSubscriptionsFor 指定 user_id 的推播訂閱。ids 為空一律回 nil、不查 DB：
+// 空清單絕不能退化成「全部」（曾因 race／group 沒有成員，把推播送給全站訂閱者）。
+func (h *Handler) listSubscriptionsFor(ctx context.Context, ids []string) ([]storedSubscription, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	rows, err := h.db.Query(ctx, `
+		SELECT id, user_id, endpoint, p256dh, auth FROM push_subscriptions
+		WHERE user_id = ANY($1)
+	`, ids)
+	if err != nil {
+		return nil, err
+	}
+	return scanSubscriptions(rows)
+}
+
+// scanSubscriptions 讀完 rows（含 Close）。
+func scanSubscriptions(rows pgx.Rows) ([]storedSubscription, error) {
 	defer rows.Close()
 
 	var out []storedSubscription
@@ -544,7 +590,7 @@ func (h *Handler) SendToUser(ctx context.Context, userID string, msg PushMessage
 		return nil
 	}
 
-	subs, err := h.listSubscriptions(ctx, []string{userID})
+	subs, err := h.listSubscriptionsFor(ctx, []string{userID})
 	if err != nil {
 		return err
 	}

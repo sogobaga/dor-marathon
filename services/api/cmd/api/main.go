@@ -931,8 +931,15 @@ func main() {
 	// member_analytics_reports；啟動時若最新報告超過 25h 未算會先補跑一次，見
 	// internal/analytics/schedule.go）
 	go analyticsHandler.RunLoop(dbwake.WithJob(bgCtx, "analytics"))
-	// 背景：IP/流量每日聚合 flush（每 5 分鐘批次寫入 ops_ip_daily + 每天順手清理 30 天前舊資料）
-	go ipDailyAgg.Run(dbwake.WithJob(bgCtx, "ipdaily_flush"))
+	// 背景：IP/流量每日聚合 flush（每小時批次寫入 ops_ip_daily + 每天順手清理 30 天前舊資料）
+	// ipDailyDone 在 Run 返回後才關閉（含 bgCancel 之後的最後一次 flush）：關機時 main 必須等它（見檔尾），
+	// 否則 main 一返回、defer 的 pool.Close() 就會把這次還在連線／寫入中的 flush 直接取消，
+	// 上次 flush 之後累計的計數全部遺失（2026-10-03 部署實測：flush upsert failed … operation was canceled）。
+	ipDailyDone := make(chan struct{})
+	go func() {
+		defer close(ipDailyDone)
+		ipDailyAgg.Run(dbwake.WithJob(bgCtx, "ipdaily_flush"))
+	}()
 	// 背景：虛擬選手數據生成引擎 Phase 2（對齊台灣整點 H∈{5,6,7,20,21,22,23}，替 enabled 選手
 	// 自動生成 window_hour=H-1 這個活躍時段的活動；天氣/機率/防重寫入見 internal/virtualrunner/generator.go）
 	go virtualrunner.NewGenerator(pool).RunGenerateLoop(dbwake.WithJob(bgCtx, "virtualrunner_generator"))
@@ -961,5 +968,29 @@ func main() {
 	srv.Shutdown(shutdownCtx)
 	// Garmin 直連：HTTP 不再收新請求後，等進行中的事件處理結束並釋放未完成事件的租約，讓新程序的啟動掃描接手。
 	garminHandler.Drain(shutdownCtx)
+	// IP 流量聚合：bgCancel 後 Run 會做最後一次 flush，必須等它寫完才能返回——main 一返回，上面 defer 的
+	// pool.Close()／rdb.Close() 立刻執行並取消還在進行的連線／寫入（Neon 休眠時一次 flush 要 DNS＋TLS＋喚醒）。
+	// 與 srv.Shutdown／Drain 共用 shutdownCtx 的 30 秒上限；逾時就放棄、照常關閉（計數遺失，但不卡住關機）。
+	if !waitDone(shutdownCtx, ipDailyDone) {
+		log.Warn().Msg("shutdown: ipdaily final flush not finished before the shutdown deadline; unflushed IP counts are lost")
+	}
 	log.Info().Msg("server stopped")
+}
+
+// waitDone 等 done 被關閉或 ctx 到期，回報是否在期限內等到 done。兩者同時就緒時以 done 為準（select 會隨機
+// 挑一個，所以 ctx 到期後再看一眼 done），避免 srv.Shutdown 已用滿 30 秒、flush 其實早已完成卻誤報逾時。
+// ⚠️ 放在 main.go 而不是獨立檔：services/api/Dockerfile 用 `go build ./cmd/api/main.go`（單檔），
+// cmd/api 下新增的 .go 檔不會被編進正式映像。
+func waitDone(ctx context.Context, done <-chan struct{}) bool {
+	select {
+	case <-done:
+		return true
+	case <-ctx.Done():
+		select {
+		case <-done:
+			return true
+		default:
+			return false
+		}
+	}
 }

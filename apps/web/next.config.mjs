@@ -1,13 +1,19 @@
 // 版號：v<VERSION_BASE>.<VERSION_SERIAL>.<commit8>。進大版號改 VERSION_BASE；每次推送遞增 VERSION_SERIAL
 //（= git commit 累計數 `git rev-list --count HEAD`）。兩者皆需與後端 internal/version 同步。
 const VERSION_BASE = '1.2'
-const VERSION_SERIAL = '875'
+const VERSION_SERIAL = '876'
 const COMMIT = (process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_COMMIT || 'dev').slice(0, 8)
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   // 生產容器化：輸出 standalone（自帶最小 node server，映像更小）
   output: 'standalone',
+  // 外部 rewrite（/api → Go）轉送的 request body 上限：Next 預設只轉前 10 MiB，超過的部分靜默截斷
+  //（Content-Length 請求會卡 30 秒後 500）。Garmin 正式版審核要求推送端點能收 ≥10MB，所以放寬到 20 MiB；
+  // 必須大於 Go 端 Garmin webhook 上限（16 MiB，integration/garmin.go），超限才由 Go 回乾淨的 413。
+  // 2026-10-03 以 rml-e2e-10mb-* 容器實測：未設時 10,485,761 B 起截斷；設 '20mb' 後 16 MiB 全量 200。
+  // 代價：每個進行中的大型 /api POST 會多佔約 15–25 MB 記憶體。只在重新建置後生效（設定於 build 時固定）。
+  experimental: { middlewareClientMaxBodySize: '20mb' },
   // 版號於 build 時內聯到前端（client 可讀）
   env: {
     NEXT_PUBLIC_APP_VERSION: `v${VERSION_BASE}.${VERSION_SERIAL}.${COMMIT}`,
